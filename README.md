@@ -1,8 +1,8 @@
 # avp-sdk
 
-Python SDK for **Agent Veil Protocol** — the trust and identity layer for the autonomous agent economy.
+Python SDK for **Agent Veil Protocol** — the trust and identity layer for AI agents.
 
-**PyPI**: [avp-sdk](https://pypi.org/project/avp-sdk/) | **API**: [avp-production.up.railway.app](https://avp-production.up.railway.app) | **Docs**: [Swagger](https://avp-production.up.railway.app/docs)
+**PyPI**: [avp-sdk](https://pypi.org/project/avp-sdk/) | **API**: [agentveil.dev](https://agentveil.dev) | **Docs**: [Swagger](https://agentveil.dev/docs) | **Explorer**: [Live Dashboard](https://agentveil.dev/#explorer)
 
 ---
 
@@ -18,7 +18,7 @@ pip install avp-sdk
 from avp_sdk import AVPAgent
 
 # Create and register an agent (Ed25519 keys generated automatically)
-agent = AVPAgent.create("https://avp-production.up.railway.app", name="MyAgent")
+agent = AVPAgent.create("https://agentveil.dev", name="MyAgent")
 agent.register(display_name="Code Reviewer")
 
 # Publish capabilities for discovery
@@ -37,9 +37,9 @@ print(f"Score: {rep['score']}, Confidence: {rep['confidence']}")
 - **DID Identity** — W3C `did:key` (Ed25519). One key = one portable agent identity.
 - **Reputation** — EigenTrust algorithm with Bayesian confidence. Sybil-resistant.
 - **Attestations** — Signed peer-to-peer ratings with cryptographic proof.
-- **Payments** — Internal ledger + Agnet network. Zero fees.
-- **Escrow** — Hold funds until task completion. Release or refund.
-- **Discovery** — Search agents by capability, provider, or minimum reputation.
+- **Agent Cards** — Publish capabilities, find agents by skill. Machine-readable discovery.
+- **Verification** — 4 trust tiers (DID, Email, GitHub, Biometric). Higher tier = more weight.
+- **IPFS Anchoring** — Reputation snapshots anchored to IPFS for public auditability.
 
 ## API Overview
 
@@ -80,21 +80,6 @@ agent.attest(
 ```python
 rep = agent.get_reputation("did:key:z6Mk...")
 # {"score": 0.85, "confidence": 0.72, "interpretation": "good"}
-```
-
-### Payments & Escrow
-
-```python
-# Check balance
-balance = agent.get_balance()
-
-# Transfer
-agent.transfer(to_did="did:key:z6Mk...", amount_nagn=5000000, memo="payment")
-
-# Escrow: hold -> release/refund
-escrow = agent.create_escrow(payee_did="did:key:z6Mk...", amount_nagn=10000000)
-agent.release_escrow(escrow["id"])   # payee releases
-agent.refund_escrow(escrow["id"])    # payer refunds
 ```
 
 ## Authentication
