@@ -2,20 +2,20 @@
 
 Python SDK for **Agent Veil Protocol** — the trust and identity layer for AI agents.
 
-**PyPI**: [avp-sdk](https://pypi.org/project/avp-sdk/) | **API**: [agentveil.dev](https://agentveil.dev) | **Docs**: [Swagger](https://agentveil.dev/docs) | **Explorer**: [Live Dashboard](https://agentveil.dev/#explorer)
+**PyPI**: [avp-sdk](https://pypi.org/project/agentveil/) | **API**: [agentveil.dev](https://agentveil.dev) | **Docs**: [Swagger](https://agentveil.dev/docs) | **Explorer**: [Live Dashboard](https://agentveil.dev/#explorer)
 
 ---
 
 ## Install
 
 ```bash
-pip install avp-sdk
+pip install agentveil
 ```
 
 ## Quick Start — One Line, Zero Config
 
 ```python
-from avp_sdk import avp_tracked
+from agentveil import avp_tracked
 
 @avp_tracked("https://agentveil.dev", name="reviewer", to_did="did:key:z6Mk...")
 def review_code(pr_url: str) -> str:
@@ -34,7 +34,7 @@ Works with sync and async functions, any framework.
 <summary>Manual control (advanced)</summary>
 
 ```python
-from avp_sdk import AVPAgent
+from agentveil import AVPAgent
 
 agent = AVPAgent.create("https://agentveil.dev", name="MyAgent")
 agent.register(display_name="Code Reviewer")
@@ -61,7 +61,7 @@ print(f"Score: {rep['score']}, Confidence: {rep['confidence']}")
 ### @avp_tracked Decorator
 
 ```python
-from avp_sdk import avp_tracked
+from agentveil import avp_tracked
 
 # Basic — auto-register + auto-attest on success/failure
 @avp_tracked("https://agentveil.dev", name="my_agent", to_did="did:key:z6Mk...")
@@ -136,7 +136,7 @@ The SDK handles signing automatically.
 ## Error Handling
 
 ```python
-from avp_sdk import AVPAgent, AVPAuthError, AVPRateLimitError, AVPNotFoundError
+from agentveil import AVPAgent, AVPAuthError, AVPRateLimitError, AVPNotFoundError
 
 try:
     agent.attest(did, outcome="positive")

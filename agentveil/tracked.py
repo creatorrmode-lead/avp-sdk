@@ -2,7 +2,7 @@
 Universal @avp_tracked decorator — one line = full AVP integration.
 
 Usage:
-    from avp_sdk import avp_tracked
+    from agentveil import avp_tracked
 
     @avp_tracked("https://agentveil.dev", name="my_agent", capabilities=["code_review"])
     def review_code(pr_url: str) -> str:
@@ -26,10 +26,10 @@ import logging
 import traceback
 from typing import Optional
 
-from avp_sdk.agent import AVPAgent
-from avp_sdk.exceptions import AVPError
+from agentveil.agent import AVPAgent
+from agentveil.exceptions import AVPError
 
-log = logging.getLogger("avp_sdk.tracked")
+log = logging.getLogger("agentveil.tracked")
 
 # Cache of initialized agents (by name) to avoid re-registration
 _agent_cache: dict[str, AVPAgent] = {}

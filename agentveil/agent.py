@@ -21,8 +21,8 @@ from typing import Optional
 import httpx
 from nacl.signing import SigningKey, VerifyKey
 
-from avp_sdk.auth import build_auth_header
-from avp_sdk.exceptions import (
+from agentveil.auth import build_auth_header
+from agentveil.exceptions import (
     AVPError,
     AVPAuthError,
     AVPNotFoundError,
@@ -32,7 +32,7 @@ from avp_sdk.exceptions import (
     AVPServerError,
 )
 
-log = logging.getLogger("avp_sdk")
+log = logging.getLogger("agentveil")
 
 # Default storage for agent keys
 AGENTS_DIR = os.path.expanduser("~/.avp/agents")

@@ -2,7 +2,7 @@
 AVP SDK — Python client for Agent Veil Protocol.
 
 Usage:
-    from avp_sdk import AVPAgent
+    from agentveil import AVPAgent
 
     agent = AVPAgent.create("https://avp.example.com", name="MyAgent")
     agent.register()
@@ -12,9 +12,9 @@ Usage:
     agent.attest(other_agent_did, outcome="positive", weight=0.9)
 """
 
-from avp_sdk.agent import AVPAgent
-from avp_sdk.tracked import avp_tracked, clear_agent_cache
-from avp_sdk.exceptions import (
+from agentveil.agent import AVPAgent
+from agentveil.tracked import avp_tracked, clear_agent_cache
+from agentveil.exceptions import (
     AVPError,
     AVPAuthError,
     AVPNotFoundError,
