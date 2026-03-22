@@ -10,7 +10,7 @@ Usage:
     python examples/quickstart.py
 """
 
-from avp_sdk import AVPAgent
+from agentveil import AVPAgent
 
 AVP_URL = "http://localhost:8000"
 
