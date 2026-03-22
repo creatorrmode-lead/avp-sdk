@@ -12,38 +12,77 @@ Python SDK for **Agent Veil Protocol** — the trust and identity layer for AI a
 pip install avp-sdk
 ```
 
-## Quick Start
+## Quick Start — One Line, Zero Config
+
+```python
+from avp_sdk import avp_tracked
+
+@avp_tracked("https://agentveil.dev", name="reviewer", to_did="did:key:z6Mk...")
+def review_code(pr_url: str) -> str:
+    # Your logic here — no AVP code needed
+    return analysis
+
+# Success → automatic positive attestation
+# Exception → automatic negative attestation with evidence hash
+# First call → auto-registers agent + publishes card
+# Unfair rating? Auto-dispute with evidence
+```
+
+Works with sync and async functions, any framework.
+
+<details>
+<summary>Manual control (advanced)</summary>
 
 ```python
 from avp_sdk import AVPAgent
 
-# Create and register an agent (Ed25519 keys generated automatically)
 agent = AVPAgent.create("https://agentveil.dev", name="MyAgent")
 agent.register(display_name="Code Reviewer")
-
-# Publish capabilities for discovery
 agent.publish_card(capabilities=["code_review", "security_audit"], provider="anthropic")
-
-# Rate another agent after interaction
 agent.attest("did:key:z6Mk...", outcome="positive", weight=0.9)
-
-# Check reputation
 rep = agent.get_reputation("did:key:z6Mk...")
 print(f"Score: {rep['score']}, Confidence: {rep['confidence']}")
 ```
+</details>
 
 ## Features
 
+- **Zero-Config Decorator** — `@avp_tracked()` — auto-register, auto-attest, auto-protect. One line.
 - **DID Identity** — W3C `did:key` (Ed25519). One key = one portable agent identity.
 - **Reputation** — EigenTrust algorithm with Bayesian confidence. Sybil-resistant.
-- **Attestations** — Signed peer-to-peer ratings with cryptographic proof.
+- **Attestations** — Signed peer-to-peer ratings with cryptographic proof. Negative ratings require evidence.
+- **Dispute Protection** — Contest unfair negative ratings. Arbitrator-resolved, evidence-based.
 - **Agent Cards** — Publish capabilities, find agents by skill. Machine-readable discovery.
 - **Verification** — 4 trust tiers (DID, Email, GitHub, Biometric). Higher tier = more weight.
 - **IPFS Anchoring** — Reputation snapshots anchored to IPFS for public auditability.
 
 ## API Overview
 
-### Registration
+### @avp_tracked Decorator
+
+```python
+from avp_sdk import avp_tracked
+
+# Basic — auto-register + auto-attest on success/failure
+@avp_tracked("https://agentveil.dev", name="my_agent", to_did="did:key:z6Mk...")
+def do_work(task: str) -> str:
+    return result
+
+# With capabilities and custom weight
+@avp_tracked("https://agentveil.dev", name="auditor", to_did="did:key:z6Mk...",
+             capabilities=["security_audit"], weight=0.9)
+async def audit(code: str) -> str:
+    return await run_audit(code)
+```
+
+Parameters:
+- `base_url` — AVP server URL
+- `name` — Agent name (used for key storage)
+- `to_did` — DID of agent to rate (skip to disable attestation)
+- `capabilities` — Agent capabilities for card (defaults to function name)
+- `weight` — Attestation weight 0.0-1.0 (default 0.8)
+
+### Registration (manual)
 
 ```python
 agent = AVPAgent.create(base_url, name="my_agent")

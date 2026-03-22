@@ -1,6 +1,6 @@
 [project]
 name = "avp-sdk"
-version = "0.1.1"
+version = "0.2.0"
 description = "Python SDK for Agent Veil Protocol — reputation and identity for AI agents"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -24,9 +24,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://avp-production.up.railway.app"
-Documentation = "https://avp-production.up.railway.app/docs"
-Repository = "https://github.com/creatorrmode-lead/avp-sdk"
+Homepage = "https://agentveil.dev"
+Documentation = "https://agentveil.dev/docs"
+Repository = "https://github.com/creatorrmode-lead/avp"
 
 [build-system]
 requires = ["setuptools>=68.0"]

@@ -13,6 +13,7 @@ Usage:
 """
 
 from avp_sdk.agent import AVPAgent
+from avp_sdk.tracked import avp_tracked, clear_agent_cache
 from avp_sdk.exceptions import (
     AVPError,
     AVPAuthError,
@@ -22,10 +23,12 @@ from avp_sdk.exceptions import (
     AVPValidationError,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "AVPAgent",
+    "avp_tracked",
+    "clear_agent_cache",
     "AVPError",
     "AVPAuthError",
     "AVPNotFoundError",
