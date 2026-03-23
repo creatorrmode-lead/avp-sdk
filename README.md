@@ -4,6 +4,8 @@ Python SDK for **Agent Veil Protocol** — the trust and identity layer for AI a
 
 **PyPI**: [agentveil](https://pypi.org/project/agentveil/) | **API**: [agentveil.dev](https://agentveil.dev) | **Docs**: [Swagger](https://agentveil.dev/docs) | **Explorer**: [Live Dashboard](https://agentveil.dev/#explorer)
 
+> [Why agent trust infrastructure matters](docs/SECURITY_CONTEXT.md) — verified CVEs, market data, and the structural problem AVP addresses.
+
 ---
 
 ## Install
