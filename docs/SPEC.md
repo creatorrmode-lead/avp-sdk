@@ -410,6 +410,24 @@ These systems are complementary:
 
 ---
 
+## 11. v2 Roadmap
+
+The following items are planned for AVP v2. They are listed here for
+transparency and to signal design direction — none are implemented in v1.
+
+- **Key rotation:** `POST /v1/agents/{did}/rotate-key` — replace compromised
+  keys without losing reputation history
+- **DID revocation list:** publish revoked DIDs so relying parties can check
+  before trusting
+- **Post-quantum cryptography:** CRYSTALS-Kyber1024 hybrid keypairs
+  (Ed25519 + Kyber) for long-term signature and key-exchange security
+- **Input sanitization layer:** regex-based injection detection on all
+  user-supplied fields before database write
+- **Federation:** cross-node attestation verification via mutual TLS and
+  Merkle proof exchange
+
+---
+
 ## Appendix A: API Reference
 
 **Base URL:** `https://agentveil.dev`
