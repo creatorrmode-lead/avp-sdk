@@ -1,40 +1,6 @@
 {
-  "name": "AgentVeil Protocol",
-  "description": "Trust, identity, and reputation infrastructure for AI agents. W3C DID identity (Ed25519), EigenTrust reputation, sybil detection, attestation disputes, IPFS-anchored audit trail.",
-  "repository": "https://github.com/creatorrmode-lead/avp-sdk",
-  "homepage": "https://agentveil.dev",
-  "license": "MIT",
-  "tools": [
-    "check_reputation",
-    "get_agent_info",
-    "search_agents",
-    "get_attestations_received",
-    "get_audit_trail",
-    "get_protocol_stats",
-    "verify_audit_chain",
-    "register_agent",
-    "submit_attestation",
-    "publish_agent_card",
-    "get_my_agent_info"
-  ],
-  "resources": [
-    "avp://protocol/info"
-  ],
-  "transport": [
-    "stdio",
-    "streamable-http"
-  ],
-  "runtime": "python",
-  "tags": [
-    "identity",
-    "reputation",
-    "trust",
-    "security",
-    "did",
-    "eigentrust",
-    "sybil",
-    "attestation",
-    "ipfs",
-    "audit"
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "creatorrmode-lead"
   ]
 }
