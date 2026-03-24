@@ -423,6 +423,10 @@ transparency and to signal design direction — none are implemented in v1.
   (Ed25519 + Kyber) for long-term signature and key-exchange security
 - **Input sanitization layer:** regex-based injection detection on all
   user-supplied fields before database write
+- **PII scanner:** detect and reject sensitive data (emails, API keys,
+  credentials) before immutable storage write
+- **Agent suspension API:** instant kill switch for compromised agents —
+  `POST /v1/agents/{did}/suspend` (genesis or arbitrator only)
 - **Federation:** cross-node attestation verification via mutual TLS and
   Merkle proof exchange
 

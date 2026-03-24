@@ -154,6 +154,17 @@ except AVPNotFoundError:
     print("Agent not found")
 ```
 
+## Security
+
+All inputs are validated before storage:
+- **Injection detection** — prompt injection, XSS, SQL injection, and template injection patterns rejected on all fields
+- **PII scanning** — emails, API keys, credentials blocked before immutable write
+- **Agent suspension** — compromised agents instantly suspended via API (genesis or arbitrator privilege)
+- **Replay protection** — nonce + timestamp window on every signed request
+- **Audit trail** — SHA-256 hash-chained log, anchored to IPFS
+
+Full security architecture: [SPEC.md](docs/SPEC.md)
+
 ## Examples
 
 - [`examples/quickstart.py`](examples/quickstart.py) — Register, publish card, check reputation
