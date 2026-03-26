@@ -54,6 +54,9 @@ print(f"Score: {rep['score']}, Confidence: {rep['confidence']}")
 - **Zero-Config Decorator** — `@avp_tracked()` — auto-register, auto-attest, auto-protect. One line.
 - **DID Identity** — W3C `did:key` (Ed25519). One key = one portable agent identity.
 - **Reputation** — EigenTrust algorithm with Bayesian confidence. Sybil-resistant.
+- **Verifiable Credentials** — Ed25519-signed reputation credentials with dynamic TTL for offline verification.
+- **Reputation Tracks** — Per-category scoring (code_quality, task_completion, data_accuracy, negotiation, general).
+- **Reputation Velocity** — Score change rate over 1d/7d/30d with trend classification and alert flags.
 - **Attestations** — Signed peer-to-peer ratings with cryptographic proof. Negative ratings require evidence.
 - **Dispute Protection** — Contest unfair negative ratings. Arbitrator-resolved, evidence-based.
 - **Agent Cards** — Publish capabilities, find agents by skill. Machine-readable discovery.
@@ -123,6 +126,18 @@ agent.attest(
 ```python
 rep = agent.get_reputation("did:key:z6Mk...")
 # {"score": 0.85, "confidence": 0.72, "interpretation": "good"}
+
+# Signed verifiable credential (offline verification with Ed25519)
+cred = agent.get_reputation_credential("did:key:z6Mk...", risk_level="low")
+is_valid = AVPAgent.verify_credential(cred)  # static method, no server needed
+
+# Per-category scores
+tracks = agent.get_reputation_tracks("did:key:z6Mk...")
+# {"code_quality": {"score": 0.91, ...}, "task_completion": {"score": 0.85, ...}}
+
+# Score velocity — trend and alerts
+vel = agent.get_reputation_velocity("did:key:z6Mk...")
+# {"trend": "declining", "alert": true, "velocity": {"1d": -0.05, "7d": -0.12, "30d": 0.08}}
 ```
 
 ## Authentication
