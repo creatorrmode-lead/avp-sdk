@@ -165,10 +165,41 @@ All inputs are validated before storage:
 
 Full security architecture: [SPEC.md](docs/SPEC.md)
 
+## CrewAI Integration
+
+Native tools for [CrewAI](https://www.crewai.com/) agents — check reputation, decide on delegation, log interactions.
+
+```bash
+pip install agentveil crewai
+```
+
+```python
+from crewai import Agent
+from agentveil.tools.crewai import AVPReputationTool, AVPDelegationTool, AVPAttestationTool
+
+researcher = Agent(
+    role="Research Analyst",
+    goal="Find and verify information",
+    tools=[
+        AVPReputationTool(base_url="https://agentveil.dev"),
+        AVPDelegationTool(base_url="https://agentveil.dev"),
+        AVPAttestationTool(base_url="https://agentveil.dev"),
+    ],
+)
+```
+
+**Tools provided:**
+- `AVPReputationTool` — Check an agent's trust score before working with them
+- `AVPDelegationTool` — Decide whether to delegate a task based on minimum score threshold
+- `AVPAttestationTool` — Log interaction outcomes (positive/negative/neutral) as signed attestations
+
+Full example: [`examples/crewai_example.py`](examples/crewai_example.py)
+
 ## Examples
 
 - [`examples/quickstart.py`](examples/quickstart.py) — Register, publish card, check reputation
 - [`examples/two_agents.py`](examples/two_agents.py) — Full A2A interaction with attestations
+- [`examples/crewai_example.py`](examples/crewai_example.py) — CrewAI + AVP reputation tools
 
 ## License
 
