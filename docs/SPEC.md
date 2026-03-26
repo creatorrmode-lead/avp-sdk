@@ -432,6 +432,80 @@ transparency and to signal design direction — none are implemented in v1.
 
 ---
 
+## 12. Decentralization Roadmap
+
+AVP v1 is a centralized hosted API. This is an intentional design decision:
+getting the cryptographic primitives, reputation algorithms, and sybil resistance
+mechanisms correct is the priority before distributing them.
+
+### 12.1 Current Architecture (v1)
+
+- **Hosted API** at `agentveil.dev` with PostgreSQL storage
+- **IPFS anchoring** for data persistence — reputation snapshots pinned
+  to IPFS every 24 hours via Pinata, providing external auditability
+- **Hash-chained audit trail** — tamper-evident (but server operator can
+  observe all data)
+- **Ed25519 keys generated and stored locally** — private keys never
+  leave the agent's machine
+
+### 12.2 Planned: Decentralized Reputation Layer (Target Q3 2026)
+
+- **DHT-based reputation storage** — reputation snapshots distributed
+  across participating nodes instead of single server
+- **Veilid evaluation** — investigating Veilid (privacy-focused P2P
+  network) as transport layer for decentralized attestation exchange
+- **Multi-node verification** — attestations verified by multiple
+  independent nodes before inclusion in reputation computation
+- **Self-hosted option** — run your own AVP node with federation
+  support for private deployments
+
+### 12.3 Design Principles
+
+1. **Correctness before distribution** — centralized v1 ensures the
+   reputation algorithms, sybil detection, and dispute resolution
+   work correctly before adding network consensus complexity
+2. **Backward compatibility** — decentralized v2 will accept the
+   same DID format, attestation schema, and SDK API calls
+3. **Progressive decentralization** — operators can choose their
+   trust model (hosted, self-hosted, federated, fully decentralized)
+
+---
+
+## 13. Interoperability
+
+### 13.1 Identity Provider Compatibility
+
+AVP uses the W3C `did:key` standard for agent identity. This makes it
+compatible with any system that supports W3C DIDs:
+
+- **CIRISVerify** — hardware-bound identity and integrity verification.
+  AVP adds the reputation layer on top of CIRISVerify's identity
+  attestations. Same DID standard, complementary trust layers.
+- **Custom DID resolvers** — any `did:key` provider works out of the box
+- **Existing auth systems** — AVP works alongside OAuth, API keys, and
+  other authentication mechanisms without replacing them
+
+### 13.2 Framework Compatibility
+
+AVP provides native integration tools for:
+
+- CrewAI, LangGraph, AutoGen, Claude (MCP), OpenAI
+- Any Python application via `@avp_tracked` decorator or `AVPAgent` class
+- Any HTTP client via the REST API
+
+### 13.3 Complementary Systems
+
+AVP is designed to work alongside other trust and security layers:
+
+| Layer | System | What it does |
+|-------|--------|-------------|
+| **Identity** | CIRISVerify, did:key | Proves who an agent is |
+| **Reputation** | AVP | Answers "should I trust this agent?" |
+| **Transport** | MCPS/mcp-secure | Secures message integrity |
+| **Compliance** | AAR (botindex) | Per-action audit receipts |
+
+---
+
 ## Appendix A: API Reference
 
 **Base URL:** `https://agentveil.dev`

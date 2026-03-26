@@ -256,6 +256,14 @@ Full example: [`examples/openai_example.py`](examples/openai_example.py)
 
 No extra dependencies — use `@avp_tracked` decorator or `AVPAgent` directly. See [Quick Start](#quick-start--one-line-zero-config).
 
+### Compatibility
+
+AVP works alongside any identity provider. If you're using **CIRISVerify** for hardware-bound identity and integrity — AVP adds the reputation layer on top. Same DID standard, complementary trust layers.
+
+AVP is not a replacement for existing auth — it works alongside OAuth, API keys, and custom identity solutions.
+
+Protocol specification and decentralization roadmap: [SPEC.md](docs/SPEC.md)
+
 ## Examples
 
 - [`examples/quickstart.py`](examples/quickstart.py) — Register, publish card, check reputation
