@@ -4,11 +4,9 @@
 
 Python SDK for **Agent Veil Protocol** — the trust and identity layer for AI agents.
 
-**PyPI**: [agentveil](https://pypi.org/project/agentveil/) | **API**: [agentveil.dev](https://agentveil.dev) | **Docs**: [Swagger](https://agentveil.dev/docs) | **Explorer**: [Live Dashboard](https://agentveil.dev/#explorer)
+**PyPI**: [agentveil](https://pypi.org/project/agentveil/) | **API**: [agentveil.dev](https://agentveil.dev) | **Explorer**: [Live Dashboard](https://agentveil.dev/#explorer)
 
 > [Why agent trust infrastructure matters](docs/SECURITY_CONTEXT.md) — verified CVEs, market data, and the structural problem AVP addresses.
->
-> [AVP Protocol Specification v1.0](docs/SPEC.md) — identity, reputation, sybil resistance, attestation disputes, audit trail.
 
 ---
 
@@ -163,7 +161,7 @@ All inputs are validated before storage:
 - **Replay protection** — nonce + timestamp window on every signed request
 - **Audit trail** — SHA-256 hash-chained log, anchored to IPFS
 
-Full security architecture: [SPEC.md](docs/SPEC.md)
+Full security architecture documented internally.
 
 ## Integrations
 
@@ -262,7 +260,7 @@ AVP works alongside any identity provider. If you're using **CIRISVerify** for h
 
 AVP is not a replacement for existing auth — it works alongside OAuth, API keys, and custom identity solutions.
 
-Protocol specification and decentralization roadmap: [SPEC.md](docs/SPEC.md)
+Protocol specification available on request.
 
 ## Examples
 

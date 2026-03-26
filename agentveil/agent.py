@@ -371,6 +371,42 @@ class AVPAgent:
             r = c.get(f"/v1/reputation/{target}")
             return self._handle_response(r)
 
+    def get_reputation_tracks(self, did: Optional[str] = None) -> dict:
+        """
+        Get specialized reputation scores by track (category).
+
+        Returns per-track scores derived from the attestation `context` field:
+        code_quality, task_completion, data_accuracy, negotiation, general.
+
+        Args:
+            did: Agent DID (defaults to self)
+
+        Returns:
+            dict with did and tracks: {track_name: {score, confidence, attestations}}
+        """
+        target = did or self._did
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.get(f"/v1/reputation/{target}/tracks")
+            return self._handle_response(r)
+
+    def get_reputation_velocity(self, did: Optional[str] = None) -> dict:
+        """
+        Get reputation velocity — rate of score change over time.
+
+        Returns deltas over 1d, 7d, 30d windows with trend classification
+        and alert flags for sudden drops.
+
+        Args:
+            did: Agent DID (defaults to self)
+
+        Returns:
+            dict with current_score, velocity, trend, alert, alert_reason
+        """
+        target = did or self._did
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.get(f"/v1/reputation/{target}/velocity")
+            return self._handle_response(r)
+
     def get_reputation_credential(
         self,
         did: Optional[str] = None,
