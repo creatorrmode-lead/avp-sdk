@@ -165,41 +165,106 @@ All inputs are validated before storage:
 
 Full security architecture: [SPEC.md](docs/SPEC.md)
 
-## CrewAI Integration
+## Integrations
 
-Native tools for [CrewAI](https://www.crewai.com/) agents — check reputation, decide on delegation, log interactions.
+### CrewAI
 
 ```bash
 pip install agentveil crewai
 ```
 
 ```python
-from crewai import Agent
 from agentveil.tools.crewai import AVPReputationTool, AVPDelegationTool, AVPAttestationTool
 
-researcher = Agent(
-    role="Research Analyst",
-    goal="Find and verify information",
-    tools=[
-        AVPReputationTool(base_url="https://agentveil.dev"),
-        AVPDelegationTool(base_url="https://agentveil.dev"),
-        AVPAttestationTool(base_url="https://agentveil.dev"),
-    ],
+agent = Agent(
+    role="Researcher",
+    tools=[AVPReputationTool(), AVPDelegationTool(), AVPAttestationTool()],
 )
 ```
 
-**Tools provided:**
-- `AVPReputationTool` — Check an agent's trust score before working with them
-- `AVPDelegationTool` — Decide whether to delegate a task based on minimum score threshold
-- `AVPAttestationTool` — Log interaction outcomes (positive/negative/neutral) as signed attestations
-
 Full example: [`examples/crewai_example.py`](examples/crewai_example.py)
+
+### LangGraph
+
+```bash
+pip install agentveil langchain-core langgraph
+```
+
+```python
+from agentveil.tools.langgraph import avp_check_reputation, avp_should_delegate, avp_log_interaction
+from langgraph.prebuilt import ToolNode
+
+tool_node = ToolNode([avp_check_reputation, avp_should_delegate, avp_log_interaction])
+```
+
+Full example: [`examples/langgraph_example.py`](examples/langgraph_example.py)
+
+### AutoGen
+
+```bash
+pip install agentveil autogen-core
+```
+
+```python
+from agentveil.tools.autogen import avp_reputation_tools
+
+agent = AssistantAgent(name="researcher", tools=avp_reputation_tools())
+```
+
+Full example: [`examples/autogen_example.py`](examples/autogen_example.py)
+
+### Claude (MCP Server)
+
+```bash
+pip install agentveil mcp
+```
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "agentveil": {
+      "command": "python",
+      "args": ["-m", "agentveil.tools.claude_mcp"]
+    }
+  }
+}
+```
+
+Full example: [`examples/claude_mcp_example.py`](examples/claude_mcp_example.py)
+
+### OpenAI
+
+```bash
+pip install agentveil openai
+```
+
+```python
+from agentveil.tools.openai import avp_tool_definitions, handle_avp_tool_call
+
+response = client.chat.completions.create(
+    model="gpt-4", messages=messages, tools=avp_tool_definitions()
+)
+# In your tool call loop:
+result = handle_avp_tool_call(tool_call.function.name, args)
+```
+
+Full example: [`examples/openai_example.py`](examples/openai_example.py)
+
+### Any Python
+
+No extra dependencies — use `@avp_tracked` decorator or `AVPAgent` directly. See [Quick Start](#quick-start--one-line-zero-config).
 
 ## Examples
 
 - [`examples/quickstart.py`](examples/quickstart.py) — Register, publish card, check reputation
 - [`examples/two_agents.py`](examples/two_agents.py) — Full A2A interaction with attestations
 - [`examples/crewai_example.py`](examples/crewai_example.py) — CrewAI + AVP reputation tools
+- [`examples/langgraph_example.py`](examples/langgraph_example.py) — LangGraph + AVP tools
+- [`examples/autogen_example.py`](examples/autogen_example.py) — AutoGen + AVP tools
+- [`examples/claude_mcp_example.py`](examples/claude_mcp_example.py) — Claude MCP server
+- [`examples/openai_example.py`](examples/openai_example.py) — OpenAI function calling
 
 ## License
 
