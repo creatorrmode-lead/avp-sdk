@@ -265,6 +265,40 @@ result = handle_avp_tool_call(tool_call.function.name, args)
 
 Full example: [`examples/openai_example.py`](examples/openai_example.py)
 
+### Paperclip
+
+```bash
+pip install agentveil
+```
+
+```python
+from agentveil.tools.paperclip import (
+    avp_check_reputation,
+    avp_should_delegate,
+    avp_log_interaction,
+    avp_evaluate_team,
+    avp_heartbeat_report,
+    avp_plugin_tools,
+    configure,
+)
+
+configure(base_url="https://agentveil.dev", agent_name="paperclip_ceo")
+
+# Check agent before delegation
+avp_should_delegate(did="did:key:z6Mk...", min_score=0.5)
+
+# Evaluate entire company team
+avp_evaluate_team(dids=["did:key:z6Mk...", "did:key:z6Mk..."])
+
+# Generate trust report after heartbeat
+avp_heartbeat_report(agent_did="did:key:z6Mk...", peers_evaluated=[...])
+
+# Get plugin tool definitions for Paperclip Plugin SDK
+tools = avp_plugin_tools()
+```
+
+Full example: [`examples/paperclip_example.py`](examples/paperclip_example.py)
+
 ### Any Python
 
 No extra dependencies — use `@avp_tracked` decorator or `AVPAgent` directly. See [Quick Start](#quick-start--one-line-zero-config).
@@ -286,6 +320,7 @@ Protocol specification available on request.
 - [`examples/autogen_example.py`](examples/autogen_example.py) — AutoGen + AVP tools
 - [`examples/claude_mcp_example.py`](examples/claude_mcp_example.py) — Claude MCP server
 - [`examples/openai_example.py`](examples/openai_example.py) — OpenAI function calling
+- [`examples/paperclip_example.py`](examples/paperclip_example.py) — Paperclip + AVP trust layer
 
 ## License
 
