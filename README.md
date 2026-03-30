@@ -18,6 +18,23 @@ pip install agentveil
 
 ## Quick Start — One Line, Zero Config
 
+### Try without a server (mock mode)
+
+```python
+from agentveil import AVPAgent
+
+agent = AVPAgent.create(mock=True, name="my_agent")
+agent.register(display_name="My Agent")
+rep = agent.get_reputation(agent.did)
+print(rep)  # {'score': 0.75, 'confidence': 0.5, ...}
+```
+
+No server, no Docker, no config. All crypto is real — only HTTP calls are mocked.
+
+See [`examples/standalone_demo.py`](examples/standalone_demo.py) for a full walkthrough.
+
+### With a server
+
 ```python
 from agentveil import avp_tracked
 
@@ -167,6 +184,45 @@ except AVPNotFoundError:
     print("Agent not found")
 ```
 
+## Defaults
+
+| Parameter | Default | Where | Notes |
+|-----------|---------|-------|-------|
+| `timeout` | `15.0` s | `AVPAgent.create()` | HTTP request timeout |
+| `weight` | `0.8` | `@avp_tracked` decorator | Attestation weight (0.0–1.0) |
+| `weight` | `1.0` | `agent.attest()` manual call | Override in code |
+| `min_score` | `0.5` | `search_agents()` | Minimum reputation to return |
+| `ttl_hours` | `24` | `get_reputation_credential()` | Credential validity period |
+| `risk_level` | `"medium"` | `get_reputation_credential()` | `low` / `medium` / `high` — affects TTL |
+| `save` | `True` | `AVPAgent.create()` | Save keys to `~/.avp/agents/` |
+| `key storage` | `~/.avp/agents/{name}.json` | `AVPAgent.create()` | chmod 0600 |
+
+## Troubleshooting
+
+**`ConnectionError` / `ConnectTimeout`**
+Server unreachable. Check URL and network. Use `agent.health()` to verify.
+
+**`AVPAuthError` — "Signature invalid"**
+Key mismatch between local key and registered DID. Re-register or load the correct key with `AVPAgent.load(base_url, name="...")`.
+
+**`AVPRateLimitError`**
+Too many requests. Check `e.retry_after` for wait time.
+
+**`AVPNotFoundError`**
+DID not registered. Register first with `agent.register()`.
+
+**`AVPInsufficientFundsError`**
+Not enough AGN balance for the operation. Check with `agent.get_balance()`.
+
+**`ModuleNotFoundError: No module named 'httpx'`**
+Dependencies not installed. Run `pip install agentveil` (not just copying the source).
+
+**Keys lost / agent identity gone**
+Keys are stored in `~/.avp/agents/{name}.json`. Back up this directory. If lost, you must register a new agent — there is no key recovery.
+
+**Want to test without a server?**
+Use mock mode: `AVPAgent.create(mock=True)`. All features work offline with simulated data.
+
 ## Security
 
 All inputs are validated before storage:
@@ -313,6 +369,7 @@ Protocol specification available on request.
 
 ## Examples
 
+- [`examples/standalone_demo.py`](examples/standalone_demo.py) — **No server needed** — full SDK demo with mock mode
 - [`examples/quickstart.py`](examples/quickstart.py) — Register, publish card, check reputation
 - [`examples/two_agents.py`](examples/two_agents.py) — Full A2A interaction with attestations
 - [`examples/crewai_example.py`](examples/crewai_example.py) — CrewAI + AVP reputation tools

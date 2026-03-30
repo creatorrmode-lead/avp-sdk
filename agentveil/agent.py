@@ -84,15 +84,23 @@ class AVPAgent:
     # === Factory methods ===
 
     @classmethod
-    def create(cls, base_url: str, name: str = "agent", save: bool = True) -> "AVPAgent":
+    def create(cls, base_url: str = "", name: str = "agent", save: bool = True, mock: bool = False) -> "AVPAgent":
         """
         Create a new agent with fresh Ed25519 keys.
 
         Args:
-            base_url: AVP server URL (e.g. "https://avp.example.com")
+            base_url: AVP server URL (e.g. "https://agentveil.dev"). Not needed if mock=True.
             name: Agent name (used for local key storage)
             save: Save keys to ~/.avp/agents/{name}.json
+            mock: If True, return a mock agent that works without a server
         """
+        if mock:
+            from agentveil.mock import AVPMockAgent
+            return AVPMockAgent.create(name=name)
+
+        if not base_url:
+            raise ValueError("base_url is required (or use mock=True for offline mode)")
+
         signing_key = SigningKey.generate()
         private_key = bytes(signing_key)
         agent = cls(base_url, private_key, name=name)
