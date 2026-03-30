@@ -8,6 +8,10 @@ Python SDK for **Agent Veil Protocol** — the trust and identity layer for AI a
 
 > [Why agent trust infrastructure matters](docs/SECURITY_CONTEXT.md) — verified CVEs, market data, and the structural problem AVP addresses.
 
+<p align="center">
+  <img src="docs/demo.gif" alt="AVP SDK Demo — agent identity, attestation, sybil detection" width="720">
+</p>
+
 ---
 
 ## Install
