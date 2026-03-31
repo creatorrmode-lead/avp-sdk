@@ -32,15 +32,11 @@ def main():
     rep = agent.get_reputation()
     print(f"Reputation: score={rep['score']}, confidence={rep['confidence']}")
 
-    # === 4. Check balance ===
-    bal = agent.get_balance()
-    print(f"Balance: {bal['internal_balance_agn']} AGN")
-
-    # === 5. Search for other agents ===
+    # === 4. Search for other agents ===
     agents = agent.search_agents(capability="code_review")
     print(f"Found {len(agents)} agents with code_review capability")
 
-    # === 6. Health check ===
+    # === 5. Health check ===
     health = agent.health()
     print(f"Server: {health}")
 

@@ -20,7 +20,6 @@ from agentveil.exceptions import (
     AVPAuthError,
     AVPNotFoundError,
     AVPRateLimitError,
-    AVPInsufficientFundsError,
     AVPValidationError,
 )
 
@@ -35,6 +34,5 @@ __all__ = [
     "AVPAuthError",
     "AVPNotFoundError",
     "AVPRateLimitError",
-    "AVPInsufficientFundsError",
     "AVPValidationError",
 ]
