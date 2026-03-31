@@ -42,8 +42,6 @@ class AVPMockAgent(AVPAgent):
             timeout=0,
         )
         self._mock_attestations = []
-        self._mock_balance = 1000_000_000  # 1000 AGN in nAGN
-        self._mock_escrows = {}
         self._mock_reputation = 0.75
 
     @classmethod
@@ -239,64 +237,6 @@ class AVPMockAgent(AVPAgent):
             "verification_tier": "did",
             "status": "active",
         }
-
-    # === Payments (mock) ===
-
-    def get_balance(self, did: Optional[str] = None) -> dict:
-        return {"internal_balance_agn": self._mock_balance / 1_000_000}
-
-    def transfer(self, to_did: str, amount_nagn: int, memo: Optional[str] = None) -> dict:
-        if amount_nagn > self._mock_balance:
-            from agentveil.exceptions import AVPInsufficientFundsError
-            raise AVPInsufficientFundsError("Insufficient funds", 400, "")
-        self._mock_balance -= amount_nagn
-        return {
-            "tx_id": f"mock-tx-{uuid.uuid4().hex[:8]}",
-            "from_did": self._did,
-            "to_did": to_did,
-            "amount_nagn": amount_nagn,
-            "memo": memo,
-        }
-
-    # === Escrow (mock) ===
-
-    def create_escrow(
-        self,
-        payee_did: str,
-        amount_nagn: int,
-        ttl_hours: int = 24,
-        memo: Optional[str] = None,
-    ) -> dict:
-        if amount_nagn > self._mock_balance:
-            from agentveil.exceptions import AVPInsufficientFundsError
-            raise AVPInsufficientFundsError("Insufficient funds", 400, "")
-        self._mock_balance -= amount_nagn
-        escrow_id = f"mock-escrow-{uuid.uuid4().hex[:8]}"
-        self._mock_escrows[escrow_id] = {
-            "payee_did": payee_did,
-            "amount_nagn": amount_nagn,
-            "status": "held",
-        }
-        return {
-            "escrow_id": escrow_id,
-            "payer_did": self._did,
-            "payee_did": payee_did,
-            "amount_nagn": amount_nagn,
-            "ttl_hours": ttl_hours,
-            "status": "held",
-        }
-
-    def release_escrow(self, escrow_id: str) -> dict:
-        if escrow_id in self._mock_escrows:
-            self._mock_escrows[escrow_id]["status"] = "released"
-        return {"escrow_id": escrow_id, "status": "released"}
-
-    def refund_escrow(self, escrow_id: str) -> dict:
-        if escrow_id in self._mock_escrows:
-            info = self._mock_escrows[escrow_id]
-            info["status"] = "refunded"
-            self._mock_balance += info["amount_nagn"]
-        return {"escrow_id": escrow_id, "status": "refunded"}
 
     # === Health (mock) ===
 

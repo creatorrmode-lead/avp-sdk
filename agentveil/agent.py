@@ -2,7 +2,7 @@
 AVPAgent — main SDK class for interacting with Agent Veil Protocol.
 
 Handles key management, authentication, registration, attestations,
-reputation queries, payments, and escrow.
+and reputation queries.
 
 Usage:
     agent = AVPAgent.create("https://avp.example.com", name="MyAgent")
@@ -27,7 +27,6 @@ from agentveil.exceptions import (
     AVPAuthError,
     AVPNotFoundError,
     AVPRateLimitError,
-    AVPInsufficientFundsError,
     AVPValidationError,
     AVPServerError,
 )
@@ -54,8 +53,7 @@ class AVPAgent:
     AI agent identity on Agent Veil Protocol.
 
     Manages Ed25519 keys, signs requests, and provides methods
-    for all AVP operations: registration, attestation, reputation,
-    payments, and escrow.
+    for all AVP operations: registration, attestation, and reputation.
     """
 
     def __init__(
@@ -206,8 +204,6 @@ class AVPAgent:
         elif response.status_code == 429:
             raise AVPRateLimitError(f"Rate limited: {detail}")
         elif response.status_code == 400:
-            if "Insufficient" in str(detail):
-                raise AVPInsufficientFundsError(f"Insufficient funds: {detail}", 400, detail)
             raise AVPValidationError(f"Validation error: {detail}", 400, detail)
         elif response.status_code >= 500:
             raise AVPServerError(f"Server error: {detail}", response.status_code, detail)
@@ -513,88 +509,6 @@ class AVPAgent:
         target = did or self._did
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
             r = c.get(f"/v1/agents/{target}")
-            return self._handle_response(r)
-
-    # === Payments ===
-
-    def get_balance(self, did: Optional[str] = None) -> dict:
-        """Get agent's balance (internal + Agnet)."""
-        target = did or self._did
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get(f"/v1/payments/balance/{target}")
-            return self._handle_response(r)
-
-    def transfer(self, to_did: str, amount_nagn: int, memo: Optional[str] = None) -> dict:
-        """
-        Transfer funds to another agent.
-
-        Args:
-            to_did: Recipient DID
-            amount_nagn: Amount in nAGN (1 AGN = 1,000,000 nAGN)
-            memo: Optional memo
-        """
-        body_data = {"to_agent_did": to_did, "amount_nagn": amount_nagn}
-        if memo:
-            body_data["memo"] = memo
-
-        body = json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", "/v1/payments/transfer", body)
-
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post("/v1/payments/transfer", content=body, headers=headers)
-            return self._handle_response(r)
-
-    # === Escrow ===
-
-    def create_escrow(
-        self,
-        payee_did: str,
-        amount_nagn: int,
-        ttl_hours: int = 24,
-        memo: Optional[str] = None,
-    ) -> dict:
-        """
-        Create an escrow — hold funds until interaction completes.
-
-        Args:
-            payee_did: Agent who will receive funds on success
-            amount_nagn: Amount to hold
-            ttl_hours: Hours before auto-refund (1-168)
-            memo: Optional memo
-        """
-        body_data = {
-            "payee_did": payee_did,
-            "amount_nagn": amount_nagn,
-            "ttl_hours": ttl_hours,
-        }
-        if memo:
-            body_data["memo"] = memo
-
-        body = json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", "/v1/payments/escrow", body)
-
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post("/v1/payments/escrow", content=body, headers=headers)
-            return self._handle_response(r)
-
-    def release_escrow(self, escrow_id: str) -> dict:
-        """Release escrow — send funds to payee. Only payee can call this."""
-        body_data = {"escrow_id": escrow_id, "action": "release"}
-        body = json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", "/v1/payments/escrow/resolve", body)
-
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post("/v1/payments/escrow/resolve", content=body, headers=headers)
-            return self._handle_response(r)
-
-    def refund_escrow(self, escrow_id: str) -> dict:
-        """Refund escrow — return funds to payer. Only payer can call this."""
-        body_data = {"escrow_id": escrow_id, "action": "refund"}
-        body = json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", "/v1/payments/escrow/resolve", body)
-
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post("/v1/payments/escrow/resolve", content=body, headers=headers)
             return self._handle_response(r)
 
     # === Utility ===

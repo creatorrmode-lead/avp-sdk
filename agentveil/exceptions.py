@@ -29,11 +29,6 @@ class AVPRateLimitError(AVPError):
         super().__init__(message, status_code=429)
 
 
-class AVPInsufficientFundsError(AVPError):
-    """Not enough balance for the operation."""
-    pass
-
-
 class AVPValidationError(AVPError):
     """Invalid input data."""
     pass

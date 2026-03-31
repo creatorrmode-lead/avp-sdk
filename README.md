@@ -215,9 +215,6 @@ Too many requests. Check `e.retry_after` for wait time.
 **`AVPNotFoundError`**
 DID not registered. Register first with `agent.register()`.
 
-**`AVPInsufficientFundsError`**
-Not enough AGN balance for the operation. Check with `agent.get_balance()`.
-
 **`ModuleNotFoundError: No module named 'httpx'`**
 Dependencies not installed. Run `pip install agentveil` (not just copying the source).
 
