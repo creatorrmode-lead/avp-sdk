@@ -2,7 +2,7 @@
 
 [![avp-sdk MCP server](https://glama.ai/mcp/servers/creatorrmode-lead/avp-sdk/badges/card.svg)](https://glama.ai/mcp/servers/creatorrmode-lead/avp-sdk)
 
-Python SDK for **Agent Veil Protocol** — the trust and identity layer for AI agents.
+Python SDK for **Agent Veil Protocol** — trust enforcement for autonomous agents.
 
 **PyPI**: [agentveil](https://pypi.org/project/agentveil/) | **API**: [agentveil.dev](https://agentveil.dev) | **Explorer**: [Live Dashboard](https://agentveil.dev/#explorer)
 
