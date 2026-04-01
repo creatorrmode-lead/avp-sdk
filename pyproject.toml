@@ -27,7 +27,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://agentveil.dev"
 Documentation = "https://agentveil.dev/docs"
-Repository = "https://github.com/creatorrmode-lead/avp"
+Repository = "https://github.com/creatorrmode-lead/avp-sdk"
 
 [build-system]
 requires = ["setuptools>=68.0"]
