@@ -45,7 +45,7 @@ def stage_line(name, score, delay=0.4):
 # ── Intro ──
 print(flush=True)
 p(f"{C}  Agent Veil Protocol — SDK Demo{RST}", 0.4)
-p(f"{D}  Trust & identity layer for AI agents{RST}", 0.3)
+p(f"{D}  Trust enforcement for autonomous agents{RST}", 0.3)
 p(f"{D}  pip install agentveil{RST}", 0.8)
 print(flush=True)
 p(f"{W}  Live network stats (production):{RST}", 0.3)
