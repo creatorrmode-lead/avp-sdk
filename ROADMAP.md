@@ -10,6 +10,8 @@
 - [x] 6 framework integrations
 - [x] MCP server (11 tools)
 - [x] Automated onboarding pipeline
+- [x] NetFlow Sybil resistance (max-flow graph analysis)
+- [x] Trust Gate (reputation-based rate limiting)
 
 ## Q2 2026 — Beta
 - [ ] Public metrics dashboard
