@@ -22,6 +22,7 @@ import httpx
 from nacl.signing import SigningKey, VerifyKey
 
 from agentveil.auth import build_auth_header
+from agentveil.pow import solve_pow
 from agentveil.exceptions import (
     AVPError,
     AVPAuthError,
@@ -232,7 +233,14 @@ class AVPAgent:
             data = self._handle_response(r)
             challenge = data["challenge"]
 
-            # Step 2: Sign challenge and verify
+            # Step 2: Solve Proof-of-Work puzzle
+            pow_challenge = data["pow_challenge"]
+            pow_difficulty = data["pow_difficulty"]
+            log.info(f"Solving PoW (difficulty={pow_difficulty} bits)...")
+            pow_nonce = solve_pow(pow_challenge, pow_difficulty)
+            log.info(f"PoW solved: nonce={pow_nonce}")
+
+            # Step 3: Sign challenge and verify
             signing_key = SigningKey(self._private_key)
             signed = signing_key.sign(challenge.encode())
             sig_hex = signed.signature.hex()
@@ -241,6 +249,7 @@ class AVPAgent:
                 "did": self._did,
                 "challenge": challenge,
                 "signature_hex": sig_hex,
+                "pow_nonce": pow_nonce,
             })
             self._handle_response(r)
 
@@ -257,6 +266,7 @@ class AVPAgent:
         capabilities: list[str],
         provider: Optional[str] = None,
         endpoint_url: Optional[str] = None,
+        signature: Optional[str] = None,
     ) -> dict:
         """
         Publish or update agent's capability card.
@@ -265,12 +275,15 @@ class AVPAgent:
             capabilities: List of capabilities (e.g. ["code_review", "testing"])
             provider: LLM provider (e.g. "anthropic", "openai")
             endpoint_url: URL where this agent can be reached
+            signature: Optional card signature
         """
         body_data = {"capabilities": capabilities}
         if provider:
             body_data["provider"] = provider
         if endpoint_url:
             body_data["endpoint_url"] = endpoint_url
+        if signature:
+            body_data["signature"] = signature
 
         body = json.dumps(body_data).encode()
         headers = self._auth_headers("POST", "/v1/cards", body)
@@ -308,6 +321,8 @@ class AVPAgent:
         weight: float = 1.0,
         context: Optional[str] = None,
         evidence_hash: Optional[str] = None,
+        is_private: bool = False,
+        interaction_id: Optional[str] = None,
     ) -> dict:
         """
         Submit an attestation about another agent.
@@ -318,6 +333,8 @@ class AVPAgent:
             weight: Confidence weight (0.0 to 1.0)
             context: Interaction type (e.g. "task_completion")
             evidence_hash: SHA256 of interaction log
+            is_private: If True, attestation is not publicly visible
+            interaction_id: Optional UUID linking to a specific interaction
 
         Returns:
             Attestation details
@@ -350,6 +367,10 @@ class AVPAgent:
             body_data["context"] = context
         if evidence_hash:
             body_data["evidence_hash"] = evidence_hash
+        if is_private:
+            body_data["is_private"] = True
+        if interaction_id:
+            body_data["interaction_id"] = interaction_id
 
         body = json.dumps(body_data).encode()
         headers = self._auth_headers("POST", "/v1/attestations", body)
