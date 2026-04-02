@@ -623,6 +623,48 @@ class AVPAgent:
             r = c.get(f"/v1/verify/status/{target}")
             return self._handle_response(r)
 
+    # === Onboarding / Challenge ===
+
+    def get_onboarding_challenge(self) -> Optional[dict]:
+        """
+        Get the current onboarding challenge for this agent.
+
+        Returns:
+            Challenge dict with challenge_id, challenge_text, challenge_type,
+            target_capability, deadline, status. None if no challenge exists.
+        """
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.get(f"/v1/onboarding/{self._did}/challenge")
+            if r.status_code == 404:
+                return None
+            return self._handle_response(r)
+
+    def submit_challenge_answer(self, challenge_id: str, answer: str) -> dict:
+        """
+        Submit an answer to the onboarding challenge.
+
+        Args:
+            challenge_id: The challenge_id from get_onboarding_challenge()
+            answer: The agent's answer (10-5000 chars)
+
+        Returns:
+            dict with challenge_id, score, passed, reasoning, pipeline_status
+        """
+        body_data = {"challenge_id": challenge_id, "answer": answer}
+        body = json.dumps(body_data).encode()
+        path = f"/v1/onboarding/{self._did}/challenge"
+        headers = self._auth_headers("POST", path, body)
+
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.post(path, content=body, headers=headers)
+            return self._handle_response(r)
+
+    def get_onboarding_status(self) -> dict:
+        """Get current onboarding status for this agent."""
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.get(f"/v1/onboarding/{self._did}")
+            return self._handle_response(r)
+
     # === Utility ===
 
     def health(self) -> dict:

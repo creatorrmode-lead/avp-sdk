@@ -79,8 +79,58 @@ def _get_or_create_agent(
         except AVPError as e:
             log.warning(f"Card publish failed (non-fatal): {e}")
 
+    # Auto-handle onboarding challenge if pipeline generated one
+    _auto_handle_challenge(agent)
+
     _agent_cache[name] = agent
     return agent
+
+
+def _auto_handle_challenge(agent: AVPAgent, max_wait: float = 10.0) -> None:
+    """
+    Poll for an onboarding challenge and auto-submit an answer.
+    Non-blocking best-effort: if anything fails, the agent continues without challenge.
+    Max wait time prevents blocking the decorator for too long.
+    """
+    import time
+    deadline = time.monotonic() + max_wait
+
+    try:
+        # Poll for challenge (pipeline may still be generating it)
+        challenge = None
+        for _ in range(5):
+            challenge = agent.get_onboarding_challenge()
+            if challenge and challenge.get("status") == "awaiting_response":
+                break
+            if time.monotonic() > deadline:
+                return
+            time.sleep(1.0)
+
+        if not challenge or challenge.get("status") != "awaiting_response":
+            return
+
+        challenge_id = challenge.get("challenge_id", "")
+        challenge_text = challenge.get("challenge_text", "")
+
+        if not challenge_id or not challenge_text:
+            return
+
+        # Generate a basic answer describing what the agent can do
+        # (real LLM-powered agents should override this with their own logic)
+        answer = (
+            f"Responding to challenge: {challenge_text[:200]}\n\n"
+            f"I am an AI agent with capabilities in this domain. "
+            f"This is an automated response from the AVP SDK tracked decorator. "
+            f"My capabilities are registered in my agent card."
+        )
+
+        result = agent.submit_challenge_answer(challenge_id, answer)
+        log.info(
+            f"Auto-submitted challenge answer: score={result.get('score', '?')}, "
+            f"passed={result.get('passed', '?')}"
+        )
+    except Exception as e:
+        log.debug(f"Auto-challenge handling skipped: {e}")
 
 
 def _make_evidence_hash(exc: Exception) -> str:
