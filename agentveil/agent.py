@@ -532,6 +532,71 @@ class AVPAgent:
             r = c.get(f"/v1/agents/{target}")
             return self._handle_response(r)
 
+    # === Verification ===
+
+    def verify_email(self, email: str) -> dict:
+        """
+        Start email verification. Sends OTP code to the given email.
+
+        Args:
+            email: Email address to verify
+
+        Returns:
+            dict with message and expires_in
+        """
+        body = json.dumps({"email": email}).encode()
+        headers = self._auth_headers("POST", "/v1/verify/email", body)
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.post("/v1/verify/email", content=body, headers=headers)
+            return self._handle_response(r)
+
+    def confirm_email(self, otp: str) -> dict:
+        """
+        Confirm email OTP code. Upgrades to EMAIL tier (0.3x trust boost).
+
+        Args:
+            otp: 6-digit verification code from email
+
+        Returns:
+            dict with verified, tier, trust_boost
+        """
+        body = json.dumps({"otp": otp}).encode()
+        headers = self._auth_headers("POST", "/v1/verify/email/confirm", body)
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.post("/v1/verify/email/confirm", content=body, headers=headers)
+            return self._handle_response(r)
+
+    def verify_moltbook(self, moltbook_username: str) -> dict:
+        """
+        Request Moltbook verification. Bot will check your profile and upgrade tier.
+
+        Args:
+            moltbook_username: Your Moltbook username
+
+        Returns:
+            dict with message and status
+        """
+        body = json.dumps({"moltbook_username": moltbook_username}).encode()
+        headers = self._auth_headers("POST", "/v1/verify/moltbook", body)
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.post("/v1/verify/moltbook", content=body, headers=headers)
+            return self._handle_response(r)
+
+    def get_verification_status(self, did: Optional[str] = None) -> dict:
+        """
+        Check verification status for an agent.
+
+        Args:
+            did: Agent DID (defaults to self)
+
+        Returns:
+            dict with did, tier, trust_boost, verified_at
+        """
+        target = did or self._did
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.get(f"/v1/verify/status/{target}")
+            return self._handle_response(r)
+
     # === Utility ===
 
     def health(self) -> dict:
