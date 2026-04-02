@@ -16,17 +16,15 @@ AVP_URL = "http://localhost:8000"
 
 
 def main():
-    # === 1. Create and register agent ===
+    # === 1. Create, register, and publish card in one call ===
     agent = AVPAgent.create(AVP_URL, name="quickstart_agent")
-    agent.register(display_name="Quickstart Agent")
-    print(f"Agent registered: {agent.did}")
-
-    # === 2. Publish capabilities ===
-    card = agent.publish_card(
+    agent.register(
+        display_name="Quickstart Agent",
         capabilities=["code_review", "testing", "documentation"],
         provider="anthropic",
     )
-    print(f"Card published: {card['capabilities']}")
+    print(f"Agent registered: {agent.did}")
+    print("Card published and onboarding started automatically.")
 
     # === 3. Check reputation ===
     rep = agent.get_reputation()

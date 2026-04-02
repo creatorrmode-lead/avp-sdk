@@ -213,23 +213,43 @@ class AVPAgent:
 
     # === Registration ===
 
-    def register(self, display_name: Optional[str] = None) -> dict:
+    def register(
+        self,
+        display_name: Optional[str] = None,
+        capabilities: Optional[list[str]] = None,
+        endpoint_url: Optional[str] = None,
+        provider: Optional[str] = None,
+    ) -> dict:
         """
         Register agent on AVP and verify key ownership.
-        Does both steps (register + verify) in one call.
+        Does register + PoW + verify in one call.
+
+        If capabilities are provided, the agent card is auto-created
+        and the onboarding pipeline starts immediately after verification.
 
         Args:
             display_name: Optional human-readable name
+            capabilities: Agent capabilities (e.g. ["code_review", "testing"])
+            endpoint_url: URL where this agent can be reached
+            provider: LLM provider (e.g. "anthropic", "openai")
 
         Returns:
             dict with 'did' and 'agnet_address'
         """
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            # Step 1: Register
-            r = c.post("/v1/agents/register", json={
+            # Step 1: Register (with optional card data)
+            body = {
                 "public_key_hex": self.public_key_hex,
                 "display_name": display_name or self._name,
-            })
+            }
+            if capabilities:
+                body["capabilities"] = capabilities
+            if endpoint_url:
+                body["endpoint_url"] = endpoint_url
+            if provider:
+                body["provider"] = provider
+
+            r = c.post("/v1/agents/register", json=body)
             data = self._handle_response(r)
             challenge = data["challenge"]
 
@@ -251,12 +271,18 @@ class AVPAgent:
                 "signature_hex": sig_hex,
                 "pow_nonce": pow_nonce,
             })
-            self._handle_response(r)
+            verify_data = self._handle_response(r)
 
         self._is_registered = True
         self._is_verified = True
         self.save()
-        log.info(f"Registered and verified: {self._did[:40]}...")
+
+        next_step = verify_data.get("next_step", "")
+        if "Onboarding started" in next_step:
+            log.info(f"Registered, verified, card published, onboarding started: {self._did[:40]}...")
+        else:
+            log.info(f"Registered and verified: {self._did[:40]}...")
+
         return data
 
     # === Agent Cards ===

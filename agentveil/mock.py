@@ -58,7 +58,13 @@ class AVPMockAgent(AVPAgent):
 
     # === Registration (mock) ===
 
-    def register(self, display_name: Optional[str] = None) -> dict:
+    def register(
+        self,
+        display_name: Optional[str] = None,
+        capabilities: Optional[list[str]] = None,
+        endpoint_url: Optional[str] = None,
+        provider: Optional[str] = None,
+    ) -> dict:
         self._is_registered = True
         self._is_verified = True
         log.info(f"Mock registered: {self._did[:40]}...")
