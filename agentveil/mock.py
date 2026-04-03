@@ -162,6 +162,31 @@ class AVPMockAgent(AVPAgent):
             "ipfs_cid": f"QmMOCK{uuid.uuid4().hex[:16]}",
         }
 
+    def attest_batch(self, attestations: list[dict]) -> dict:
+        if not attestations or len(attestations) > 50:
+            from agentveil.exceptions import AVPValidationError
+            raise AVPValidationError("Batch must contain 1-50 attestations", 400, "")
+
+        results = []
+        succeeded = 0
+        for idx, att in enumerate(attestations):
+            single = self.attest(
+                to_did=att["to_did"],
+                outcome=att.get("outcome", "positive"),
+                weight=att.get("weight", 1.0),
+                context=att.get("context"),
+                evidence_hash=att.get("evidence_hash"),
+            )
+            results.append({"index": idx, "success": True, "attestation": single})
+            succeeded += 1
+
+        return {
+            "total": len(attestations),
+            "succeeded": succeeded,
+            "failed": 0,
+            "results": results,
+        }
+
     # === Reputation (mock) ===
 
     def get_reputation(self, did: Optional[str] = None) -> dict:
@@ -181,6 +206,22 @@ class AVPMockAgent(AVPAgent):
             "confidence": round(confidence, 4),
             "interpretation": interpretation,
             "total_attestations": len(self._mock_attestations),
+        }
+
+    def get_reputation_bulk(self, dids: list[str]) -> dict:
+        if not dids or len(dids) > 100:
+            from agentveil.exceptions import AVPValidationError
+            raise AVPValidationError("Bulk query requires 1-100 DIDs", 400, "")
+
+        results = []
+        for d in dids:
+            rep = self.get_reputation(d)
+            results.append({"did": d, "found": True, "reputation": rep})
+
+        return {
+            "total": len(dids),
+            "found": len(dids),
+            "results": results,
         }
 
     def get_reputation_tracks(self, did: Optional[str] = None) -> dict:

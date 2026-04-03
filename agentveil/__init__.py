@@ -23,7 +23,7 @@ from agentveil.exceptions import (
     AVPValidationError,
 )
 
-__version__ = "0.3.3"
+__version__ = "0.3.6"
 
 __all__ = [
     "AVPAgent",

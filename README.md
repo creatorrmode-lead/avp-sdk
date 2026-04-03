@@ -142,6 +142,14 @@ agent.attest(
     context="task_completion",
     evidence_hash="sha256_of_interaction_log",
 )
+
+# Batch: submit up to 50 attestations at once (partial success)
+result = agent.attest_batch([
+    {"to_did": "did:key:z6Mk1...", "outcome": "positive", "weight": 0.8},
+    {"to_did": "did:key:z6Mk2...", "outcome": "negative", "weight": 0.5,
+     "context": "code_quality", "evidence_hash": "abcdef..."},
+])
+# {"total": 2, "succeeded": 2, "failed": 0, "results": [...]}
 ```
 
 ### Reputation
@@ -149,6 +157,10 @@ agent.attest(
 ```python
 rep = agent.get_reputation("did:key:z6Mk...")
 # {"score": 0.85, "confidence": 0.72, "interpretation": "good"}
+
+# Bulk: get scores for up to 100 agents at once
+bulk = agent.get_reputation_bulk(["did:key:z6Mk1...", "did:key:z6Mk2..."])
+# {"total": 2, "found": 2, "results": [{"did": "...", "found": true, "reputation": {...}}, ...]}
 
 # Signed verifiable credential (offline verification with Ed25519)
 cred = agent.get_reputation_credential("did:key:z6Mk...", risk_level="low")

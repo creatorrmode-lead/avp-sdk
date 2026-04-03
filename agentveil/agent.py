@@ -405,6 +405,76 @@ class AVPAgent:
             r = c.post("/v1/attestations", content=body, headers=headers)
             return self._handle_response(r)
 
+    def attest_batch(self, attestations: list[dict]) -> dict:
+        """
+        Submit multiple attestations in a single request (up to 50).
+
+        Each attestation is validated independently — partial success is possible.
+
+        Args:
+            attestations: List of dicts, each with:
+                - to_did (str): Target agent DID
+                - outcome (str): "positive", "negative", or "neutral"
+                - weight (float): 0.0-1.0 (default 1.0)
+                - context (str, optional): Interaction type
+                - evidence_hash (str, optional): SHA256 of evidence
+                - is_private (bool, optional): Default False
+                - interaction_id (str, optional): UUID
+
+        Returns:
+            dict with total, succeeded, failed, results
+        """
+        if not attestations or len(attestations) > 50:
+            raise AVPValidationError("Batch must contain 1-50 attestations")
+
+        signing_key = SigningKey(self._private_key)
+        items = []
+
+        for att in attestations:
+            to_did = att["to_did"]
+            outcome = att.get("outcome", "positive")
+            weight = att.get("weight", 1.0)
+            context = att.get("context")
+            evidence_hash = att.get("evidence_hash")
+
+            if outcome not in ("positive", "negative", "neutral"):
+                raise AVPValidationError(f"Invalid outcome: {outcome}")
+            if not 0.0 <= weight <= 1.0:
+                raise AVPValidationError(f"Weight must be 0.0-1.0, got {weight}")
+
+            # Sign each attestation
+            attest_payload = json.dumps({
+                "to": to_did,
+                "outcome": outcome,
+                "weight": weight,
+                "context": context or "",
+                "evidence_hash": evidence_hash or "",
+            }, sort_keys=True, separators=(",", ":")).encode()
+            signed = signing_key.sign(attest_payload)
+
+            item = {
+                "to_agent_did": to_did,
+                "outcome": outcome,
+                "weight": weight,
+                "signature": signed.signature.hex(),
+            }
+            if context:
+                item["context"] = context
+            if evidence_hash:
+                item["evidence_hash"] = evidence_hash
+            if att.get("is_private"):
+                item["is_private"] = True
+            if att.get("interaction_id"):
+                item["interaction_id"] = att["interaction_id"]
+            items.append(item)
+
+        body = json.dumps({"attestations": items}).encode()
+        headers = self._auth_headers("POST", "/v1/attestations/batch", body)
+
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.post("/v1/attestations/batch", content=body, headers=headers)
+            return self._handle_response(r)
+
     # === Reputation ===
 
     def get_reputation(self, did: Optional[str] = None) -> dict:
@@ -420,6 +490,24 @@ class AVPAgent:
         target = did or self._did
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
             r = c.get(f"/v1/reputation/{target}")
+            return self._handle_response(r)
+
+    def get_reputation_bulk(self, dids: list[str]) -> dict:
+        """
+        Get reputation scores for multiple agents in one request (up to 100).
+
+        Args:
+            dids: List of agent DIDs
+
+        Returns:
+            dict with total, found, results (list of {did, found, reputation, error})
+        """
+        if not dids or len(dids) > 100:
+            raise AVPValidationError("Bulk query requires 1-100 DIDs")
+
+        dids_param = ",".join(dids)
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.get("/v1/reputation/bulk", params={"dids": dids_param})
             return self._handle_response(r)
 
     def get_reputation_tracks(self, did: Optional[str] = None) -> dict:
