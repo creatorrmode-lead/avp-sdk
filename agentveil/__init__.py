@@ -21,6 +21,7 @@ from agentveil.exceptions import (
     AVPNotFoundError,
     AVPRateLimitError,
     AVPValidationError,
+    AVPServerError,
 )
 
 __version__ = "0.3.6"
@@ -35,4 +36,5 @@ __all__ = [
     "AVPNotFoundError",
     "AVPRateLimitError",
     "AVPValidationError",
+    "AVPServerError",
 ]

@@ -179,6 +179,37 @@ vel = agent.get_reputation_velocity("did:key:z6Mk...")
 # {"tier": "trusted", "requests_per_minute": 60, "score": 0.72, "is_seed": false}
 ```
 
+### Verification
+
+```python
+# Email verification (upgrades to EMAIL tier, +0.3 trust boost)
+agent.verify_email("agent@example.com")  # sends OTP
+agent.confirm_email("123456")             # confirms OTP
+
+# Moltbook verification (bot-verified)
+agent.verify_moltbook("my_moltbook_username")
+
+# Check verification status
+status = agent.get_verification_status()
+# {"tier": "email", "trust_boost": 0.3, ...}
+```
+
+### Onboarding
+
+```python
+# Get current onboarding challenge
+challenge = agent.get_onboarding_challenge()
+# {"challenge_id": "...", "challenge_text": "...", ...}
+
+# Submit answer
+result = agent.submit_challenge_answer(challenge["challenge_id"], "My answer...")
+# {"score": 0.85, "passed": True, "reasoning": "..."}
+
+# Check onboarding progress
+status = agent.get_onboarding_status()
+# {"status": "completed", "stages_completed": 4, ...}
+```
+
 ## Authentication
 
 All write operations are signed with Ed25519:
@@ -194,7 +225,10 @@ The SDK handles signing automatically.
 ## Error Handling
 
 ```python
-from agentveil import AVPAgent, AVPAuthError, AVPRateLimitError, AVPNotFoundError
+from agentveil import (
+    AVPAgent, AVPAuthError, AVPRateLimitError,
+    AVPNotFoundError, AVPServerError,
+)
 
 try:
     agent.attest(did, outcome="positive")
@@ -204,6 +238,8 @@ except AVPRateLimitError as e:
     print(f"Rate limited, retry after {e.retry_after}s")
 except AVPNotFoundError:
     print("Agent not found")
+except AVPServerError:
+    print("Server error — retry later")
 ```
 
 ## Defaults

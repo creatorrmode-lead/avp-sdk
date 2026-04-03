@@ -214,3 +214,61 @@ class TestMockUtilities:
         r = repr(mock_agent)
         assert "AVPMockAgent" in r
         assert "verified" in r
+
+
+class TestMockVerification:
+    """Verification mock methods."""
+
+    def test_verify_email_returns_dict(self, mock_agent):
+        result = mock_agent.verify_email("test@example.com")
+        assert "message" in result
+        assert "expires_in" in result
+
+    def test_confirm_email_returns_verified(self, mock_agent):
+        result = mock_agent.confirm_email("123456")
+        assert result["verified"] is True
+        assert "tier" in result
+        assert "trust_boost" in result
+
+    def test_verify_moltbook_returns_status(self, mock_agent):
+        result = mock_agent.verify_moltbook("testuser")
+        assert "message" in result
+        assert "status" in result
+
+    def test_get_verification_status_self(self, mock_agent):
+        status = mock_agent.get_verification_status()
+        assert status["did"] == mock_agent.did
+        assert "tier" in status
+
+    def test_get_verification_status_other(self, mock_agent):
+        status = mock_agent.get_verification_status("did:key:z6MkOther")
+        assert status["did"] == "did:key:z6MkOther"
+
+
+class TestMockOnboarding:
+    """Onboarding challenge mock methods."""
+
+    def test_get_onboarding_challenge(self, mock_agent):
+        challenge = mock_agent.get_onboarding_challenge()
+        assert challenge is not None
+        assert "challenge_id" in challenge
+        assert "challenge_text" in challenge
+        assert "challenge_type" in challenge
+
+    def test_submit_challenge_answer(self, mock_agent):
+        result = mock_agent.submit_challenge_answer("test-id", "My answer here")
+        assert "score" in result
+        assert "passed" in result
+        assert isinstance(result["passed"], bool)
+
+    def test_get_onboarding_status_verified(self, mock_agent):
+        status = mock_agent.get_onboarding_status()
+        assert status["did"] == mock_agent.did
+        assert status["status"] == "completed"
+        assert status["stages_completed"] == 4
+
+    def test_get_onboarding_status_new(self):
+        agent = AVPMockAgent.create(name="new_agent")
+        status = agent.get_onboarding_status()
+        assert status["status"] == "pending"
+        assert status["stages_completed"] == 0

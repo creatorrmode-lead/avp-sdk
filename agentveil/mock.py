@@ -274,6 +274,54 @@ class AVPMockAgent(AVPAgent):
             "risk_level": risk_level,
         }
 
+    # === Verification (mock) ===
+
+    def verify_email(self, email: str) -> dict:
+        return {"message": "Verification email sent", "expires_in": 600}
+
+    def confirm_email(self, otp: str) -> dict:
+        return {"verified": True, "tier": "email", "trust_boost": 0.3}
+
+    def verify_moltbook(self, moltbook_username: str) -> dict:
+        return {"message": "Moltbook verification requested", "status": "pending"}
+
+    def get_verification_status(self, did: Optional[str] = None) -> dict:
+        return {
+            "did": did or self._did,
+            "tier": "did",
+            "trust_boost": 0.0,
+            "verified_at": None,
+        }
+
+    # === Onboarding (mock) ===
+
+    def get_onboarding_challenge(self) -> Optional[dict]:
+        return {
+            "challenge_id": f"mock-challenge-{uuid.uuid4().hex[:8]}",
+            "challenge_text": "Describe your primary capability in 2-3 sentences.",
+            "challenge_type": "capability_description",
+            "target_capability": "general",
+            "deadline": "2099-01-01T00:00:00Z",
+            "status": "pending",
+        }
+
+    def submit_challenge_answer(self, challenge_id: str, answer: str) -> dict:
+        return {
+            "challenge_id": challenge_id,
+            "score": 0.85,
+            "passed": True,
+            "reasoning": "Mock evaluation: answer meets requirements",
+            "pipeline_status": "completed",
+        }
+
+    def get_onboarding_status(self) -> dict:
+        return {
+            "did": self._did,
+            "status": "completed" if self._is_verified else "pending",
+            "stages_completed": 4 if self._is_verified else 0,
+            "stages_total": 4,
+        }
+
     # === Agent Info (mock) ===
 
     def get_agent_info(self, did: Optional[str] = None) -> dict:
