@@ -356,12 +356,19 @@ class AVPAgent:
         self._is_verified = True
         self.save()
 
+        onboarding_started = verify_data.get("onboarding_started", False)
         next_step = verify_data.get("next_step", "")
-        if "Onboarding started" in next_step:
+
+        if onboarding_started or "Onboarding started" in next_step:
             log.info(f"Registered, verified, card published, onboarding started: {self._did[:40]}...")
             self._auto_handle_onboarding_challenge()
         else:
-            log.info(f"Registered and verified: {self._did[:40]}...")
+            log.warning(
+                f"Registered and verified but onboarding NOT started: "
+                f"no capabilities were provided. Call agent.publish_card("
+                f"capabilities=[...], provider='...') to start onboarding. "
+                f"Server response: {next_step}"
+            )
 
         return data
 
