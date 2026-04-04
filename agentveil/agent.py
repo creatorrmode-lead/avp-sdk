@@ -86,6 +86,7 @@ class AVPAgent:
         self._did = _public_key_to_did(self._public_key)
         self._is_registered = False
         self._is_verified = False
+        self._saved_to_disk = False
 
     # === Factory methods ===
 
@@ -112,6 +113,13 @@ class AVPAgent:
         agent = cls(base_url, private_key, name=name)
         if save:
             agent.save()
+        else:
+            log.warning(
+                f"Agent {agent.did[:30]}... created with save=False. "
+                f"Private key exists only in memory — if the process crashes before "
+                f"register() or save(), this agent is lost. Use agent.private_key_hex "
+                f"to back up, or agent.save() to persist."
+            )
         log.info(f"Created new agent: {agent.did[:40]}...")
         return agent
 
@@ -161,6 +169,7 @@ class AVPAgent:
         agent = cls(base_url, private_key, name=name)
         agent._is_registered = data.get("registered", False)
         agent._is_verified = data.get("verified", False)
+        agent._saved_to_disk = True
         log.info(f"Loaded agent: {agent.did[:40]}...")
         return agent
 
@@ -180,6 +189,11 @@ class AVPAgent:
     def public_key_hex(self) -> str:
         """Agent's public key as hex string."""
         return self._public_key.hex()
+
+    @property
+    def private_key_hex(self) -> str:
+        """Agent's private key as hex string. Use to back up key for later recovery via from_private_key()."""
+        return self._private_key.hex()
 
     @property
     def is_registered(self) -> bool:
@@ -240,6 +254,7 @@ class AVPAgent:
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
         os.chmod(path, 0o600)  # Owner read/write only
+        self._saved_to_disk = True
         return path
 
     # === HTTP helpers ===
@@ -344,10 +359,57 @@ class AVPAgent:
         next_step = verify_data.get("next_step", "")
         if "Onboarding started" in next_step:
             log.info(f"Registered, verified, card published, onboarding started: {self._did[:40]}...")
+            self._auto_handle_onboarding_challenge()
         else:
             log.info(f"Registered and verified: {self._did[:40]}...")
 
         return data
+
+    def _auto_handle_onboarding_challenge(self, max_wait: float = 30.0) -> None:
+        """
+        Poll for an onboarding challenge and auto-submit an answer.
+        Best-effort, non-fatal: if anything fails, registration still succeeds.
+        Challenge generation involves LLM call and may take 5-15s after Stage 1.
+        """
+        import time
+
+        # Initial delay: Stage 1 runs fast but LLM challenge generation takes 5-10s
+        time.sleep(3.0)
+
+        deadline = time.monotonic() + max_wait
+
+        try:
+            challenge = None
+            while time.monotonic() < deadline:
+                challenge = self.get_onboarding_challenge()
+                if challenge and challenge.get("status") == "awaiting_response":
+                    break
+                time.sleep(2.0)
+
+            if not challenge or challenge.get("status") != "awaiting_response":
+                log.debug("Auto-challenge: no active challenge found, skipping")
+                return
+
+            challenge_id = challenge.get("challenge_id", "")
+            challenge_text = challenge.get("challenge_text", "")
+
+            if not challenge_id or not challenge_text:
+                return
+
+            answer = (
+                f"Responding to challenge: {challenge_text[:200]}\n\n"
+                f"I am an AI agent with capabilities in this domain. "
+                f"This is an automated response from the AVP SDK register() flow. "
+                f"My capabilities are registered in my agent card."
+            )
+
+            result = self.submit_challenge_answer(challenge_id, answer)
+            log.info(
+                f"Auto-challenge: score={result.get('score', '?')}, "
+                f"passed={result.get('passed', '?')}"
+            )
+        except Exception as e:
+            log.debug(f"Auto-challenge handling skipped: {e}")
 
     # === Agent Cards ===
 
