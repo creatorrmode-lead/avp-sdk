@@ -1,12 +1,12 @@
 [project]
 name = "agentveil"
-version = "0.4.0"
+version = "0.4.1"
 description = "Python SDK for Agent Veil Protocol — reputation and identity for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Agent Veil Protocol"}]
-keywords = ["ai", "agents", "reputation", "did", "identity", "a2a"]
+keywords = ["ai", "agents", "reputation", "did", "identity", "a2a", "hermes", "mcp", "trust"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -37,7 +37,7 @@ build-backend = "setuptools.build_meta"
 test = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 
 [tool.setuptools.packages.find]
-include = ["agentveil*"]
+include = ["agentveil*", "mcp_server*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
