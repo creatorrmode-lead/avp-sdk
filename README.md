@@ -410,6 +410,38 @@ tools = avp_plugin_tools()
 
 Full example: [`examples/paperclip_example.py`](examples/paperclip_example.py)
 
+### Hermes (Nous Research)
+
+```bash
+pip install agentveil mcp
+```
+
+AVP integrates with [Hermes Agent](https://github.com/NousResearch/hermes-agent) via **MCP + agentskills.io skill**. No custom adapter needed — Hermes natively supports MCP servers and skills.
+
+**Option 1: MCP server** — connect the AVP MCP server (11 tools) in your Hermes MCP config:
+
+```json
+{
+  "mcpServers": {
+    "avp": {
+      "command": "python3",
+      "args": ["-m", "mcp_server.server"],
+      "env": { "AVP_BASE_URL": "https://agentveil.dev" }
+    }
+  }
+}
+```
+
+**Option 2: Skill** — install the AVP skill for trust-gated delegation:
+
+```bash
+cp -r skills/avp-trust-enforcement ~/.hermes/skills/
+```
+
+The skill teaches Hermes agents when and how to check reputation, submit attestations, and enforce trust gates before delegating tasks.
+
+Skill file: [`skills/avp-trust-enforcement/SKILL.md`](skills/avp-trust-enforcement/SKILL.md)
+
 ### Any Python
 
 No extra dependencies — use `@avp_tracked` decorator or `AVPAgent` directly. See [Quick Start](#quick-start--one-line-zero-config).
