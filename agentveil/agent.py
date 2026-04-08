@@ -679,6 +679,56 @@ class AVPAgent:
             r = c.get(f"/v1/reputation/{target}/velocity")
             return self._handle_response(r)
 
+    # ── Alert Webhooks ──────────────────────────────────────────────────
+
+    def set_alert(
+        self,
+        webhook_url: str,
+        threshold: float = 0.5,
+    ) -> dict:
+        """
+        Subscribe to score drop alerts.
+
+        When this agent's score falls below threshold, AVP POSTs to webhook_url.
+        Upserts: if (agent, url) already exists, updates threshold.
+
+        Args:
+            webhook_url: HTTPS endpoint (Discord, Teams, PagerDuty, Zapier, custom)
+            threshold: Score threshold (default 0.5, range 0.0-1.0)
+
+        Returns:
+            dict with alert subscription details
+        """
+        body = json.dumps({
+            "webhook_url": webhook_url,
+            "threshold": threshold,
+        }).encode()
+        headers = self._auth_headers("POST", "/v1/alerts", body)
+
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.post("/v1/alerts", content=body, headers=headers)
+            return self._handle_response(r)
+
+    def remove_alert(self, alert_id: str) -> None:
+        """Remove an alert subscription by ID."""
+        path = f"/v1/alerts/{alert_id}"
+        headers = self._auth_headers("DELETE", path, b"")
+
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.delete(path, headers=headers)
+            if r.status_code != 204:
+                self._handle_response(r)
+
+    def list_alerts(self) -> list[dict]:
+        """List all alert subscriptions for this agent."""
+        headers = self._auth_headers("GET", "/v1/alerts", b"")
+
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.get("/v1/alerts", headers=headers)
+            return self._handle_response(r)
+
+    # ── Reputation Credentials ────────────────────────────────────────
+
     def get_reputation_credential(
         self,
         did: Optional[str] = None,

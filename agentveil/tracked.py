@@ -23,6 +23,7 @@ import functools
 import hashlib
 import inspect
 import logging
+import os
 import traceback
 from typing import Optional
 
@@ -40,6 +41,7 @@ def _get_or_create_agent(
     name: str,
     capabilities: list[str],
     provider: Optional[str],
+    alert_url: Optional[str] = None,
 ) -> AVPAgent:
     """Get cached agent or create+register a new one."""
     if name in _agent_cache:
@@ -78,6 +80,15 @@ def _get_or_create_agent(
             log.info(f"Published card: {capabilities}")
         except AVPError as e:
             log.warning(f"Card publish failed (non-fatal): {e}")
+
+    # Auto-configure alert webhook (only during registration, not every call)
+    effective_alert_url = alert_url or os.environ.get("AVP_ALERT_URL")
+    if effective_alert_url:
+        try:
+            agent.set_alert(effective_alert_url)
+            log.info(f"Alert configured: {effective_alert_url[:50]}...")
+        except AVPError as e:
+            log.warning(f"Alert setup failed (non-fatal): {e}")
 
     # Auto-handle onboarding challenge if pipeline generated one
     _auto_handle_challenge(agent)
@@ -156,6 +167,7 @@ def avp_tracked(
     provider: Optional[str] = None,
     weight: float = 0.8,
     attest_self: bool = False,
+    alert_url: Optional[str] = None,
 ):
     """
     Decorator that integrates any function with Agent Veil Protocol.
@@ -191,7 +203,7 @@ def avp_tracked(
         if inspect.iscoroutinefunction(func):
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
-                agent = _get_or_create_agent(base_url, name, caps, provider)
+                agent = _get_or_create_agent(base_url, name, caps, provider, alert_url)
                 target_did = to_did
 
                 try:
@@ -231,7 +243,7 @@ def avp_tracked(
         else:
             @functools.wraps(func)
             def sync_wrapper(*args, **kwargs):
-                agent = _get_or_create_agent(base_url, name, caps, provider)
+                agent = _get_or_create_agent(base_url, name, caps, provider, alert_url)
                 target_did = to_did
 
                 try:
