@@ -63,11 +63,15 @@ def _get_or_create_agent(
         agent.register(display_name=name)
         log.info(f"Auto-registered agent: {name} ({agent.did[:40]}...)")
     except AVPError as e:
-        # Already registered (409) — load state and continue
+        # Already registered (409) — verify actual state from server
         if e.status_code == 409:
             log.info(f"Agent already registered: {name}")
             agent._is_registered = True
-            agent._is_verified = True
+            try:
+                info = agent.get_agent_info()
+                agent._is_verified = info.get("is_verified", False)
+            except Exception:
+                agent._is_verified = False
             agent.save()
         else:
             log.warning(f"Registration failed: {e}")
