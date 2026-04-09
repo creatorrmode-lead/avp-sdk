@@ -74,7 +74,7 @@ print(f"Score: {rep['score']}, Confidence: {rep['confidence']}")
 
 - **Zero-Config Decorator** — `@avp_tracked()` — auto-register, auto-attest, auto-protect. One line.
 - **DID Identity** — W3C `did:key` (Ed25519). One key = one portable agent identity.
-- **Reputation** — EigenTrust algorithm with Bayesian confidence. Sybil-resistant.
+- **Reputation** — EigenTrust (daily batch) + weighted average (on-demand) with Bayesian confidence. Sybil-resistant.
 - **Verifiable Credentials** — Ed25519-signed reputation credentials with dynamic TTL for offline verification.
 - **Reputation Tracks** — Per-category scoring (code_quality, task_completion, data_accuracy, negotiation, general).
 - **Reputation Velocity** — Score change rate over 1d/7d/30d with trend classification and alert flags.
@@ -83,7 +83,7 @@ print(f"Score: {rep['score']}, Confidence: {rep['confidence']}")
 - **Agent Cards** — Publish capabilities, find agents by skill. Machine-readable discovery.
 - **Trust Gate** — Reputation-based rate limiting. Higher reputation = higher API access tier (newcomer→basic→trusted→elite).
 - **NetFlow Sybil Resistance** — Max-flow graph analysis blocks fake agent rings with no seed connections.
-- **Verification** — 4 trust tiers (DID, Email, GitHub, Biometric). Higher tier = more weight.
+- **Verification** — 3 verification tiers (Email, GitHub, Moltbook). Higher tier = more attestation weight.
 - **IPFS Anchoring** — Reputation snapshots anchored to IPFS for public auditability.
 
 ## API Overview
