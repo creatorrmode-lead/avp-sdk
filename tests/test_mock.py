@@ -183,8 +183,10 @@ class TestMockCredential:
 
     def test_credential_has_signature(self, mock_agent):
         cred = mock_agent.get_reputation_credential()
-        assert "signature_hex" in cred
+        assert "signature" in cred
+        assert "signer_did" in cred
         assert "score" in cred
+        assert "confidence" in cred
         assert "risk_level" in cred
 
     def test_credential_risk_levels(self, mock_agent):

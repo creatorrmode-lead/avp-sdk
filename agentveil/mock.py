@@ -16,6 +16,7 @@ import time
 import uuid
 import hashlib
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from nacl.signing import SigningKey
@@ -259,6 +260,10 @@ class AVPMockAgent(AVPAgent):
         now = int(time.time())
 
         target_did = did or self._did
+        now_dt = datetime.now(timezone.utc)
+        issued_str = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        expires_str = (now_dt + timedelta(seconds=ttl)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
         payload = f"{target_did}:{self._mock_reputation}:{now}"
         signing_key = SigningKey(self._private_key)
         sig = signing_key.sign(payload.encode()).signature.hex()
@@ -266,10 +271,11 @@ class AVPMockAgent(AVPAgent):
         return {
             "did": target_did,
             "score": round(self._mock_reputation, 4),
-            "issued_at": now,
-            "expires_at": now + ttl,
-            "issuer_did": self._did,
-            "signature_hex": sig,
+            "confidence": 0.5,
+            "issued_at": issued_str,
+            "expires_at": expires_str,
+            "signer_did": self._did,
+            "signature": sig,
             "ipfs_cid": f"QmMOCK{uuid.uuid4().hex[:16]}",
             "risk_level": risk_level,
         }

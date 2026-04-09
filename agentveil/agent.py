@@ -379,9 +379,22 @@ class AVPAgent:
         Challenge generation involves LLM call and may take 5-15s after Stage 1.
         """
         import time
+        import asyncio
+
+        def _sleep(seconds: float) -> None:
+            """Sleep without blocking event loop if one is running."""
+            try:
+                loop = asyncio.get_running_loop()
+                # We're inside an event loop — don't block it
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    loop.run_in_executor(pool, time.sleep, seconds)
+            except RuntimeError:
+                # No event loop — safe to block
+                time.sleep(seconds)
 
         # Initial delay: Stage 1 runs fast but LLM challenge generation takes 5-10s
-        time.sleep(3.0)
+        _sleep(3.0)
 
         deadline = time.monotonic() + max_wait
 
@@ -391,7 +404,7 @@ class AVPAgent:
                 challenge = self.get_onboarding_challenge()
                 if challenge and challenge.get("status") == "awaiting_response":
                     break
-                time.sleep(2.0)
+                _sleep(2.0)
 
             if not challenge or challenge.get("status") != "awaiting_response":
                 log.debug("Auto-challenge: no active challenge found, skipping")

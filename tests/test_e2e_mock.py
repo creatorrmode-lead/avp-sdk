@@ -98,7 +98,8 @@ class TestFullLifecycle:
         cred = agent.get_reputation_credential(risk_level="medium")
         assert cred["did"] == agent.did
         assert cred["risk_level"] == "medium"
-        assert "signature_hex" in cred
+        assert "signature" in cred
+        assert "signer_did" in cred
         assert cred["expires_at"] > cred["issued_at"]
 
     def test_agent_info(self):

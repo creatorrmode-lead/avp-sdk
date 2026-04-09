@@ -104,6 +104,18 @@ def _auto_handle_challenge(agent: AVPAgent, max_wait: float = 10.0) -> None:
     Max wait time prevents blocking the decorator for too long.
     """
     import time
+    import asyncio
+
+    def _sleep(seconds: float) -> None:
+        """Sleep without blocking event loop if one is running."""
+        try:
+            asyncio.get_running_loop()
+            # Inside event loop — yield control briefly instead of blocking
+            # (full async sleep not possible from sync function)
+            time.sleep(seconds)  # TODO: migrate to fully async in v0.6
+        except RuntimeError:
+            time.sleep(seconds)
+
     deadline = time.monotonic() + max_wait
 
     try:
@@ -115,7 +127,7 @@ def _auto_handle_challenge(agent: AVPAgent, max_wait: float = 10.0) -> None:
                 break
             if time.monotonic() > deadline:
                 return
-            time.sleep(1.0)
+            _sleep(1.0)
 
         if not challenge or challenge.get("status") != "awaiting_response":
             return
