@@ -266,7 +266,13 @@ class AVPAgent:
     def _handle_response(self, response: httpx.Response) -> dict:
         """Parse response and raise appropriate exceptions."""
         if response.status_code == 200:
-            return response.json()
+            try:
+                return response.json()
+            except (json.JSONDecodeError, ValueError):
+                raise AVPServerError(
+                    f"Server returned non-JSON response (status 200): {response.text[:200]}",
+                    200, response.text[:200],
+                )
 
         try:
             detail = response.json().get("detail", response.text)
@@ -330,6 +336,14 @@ class AVPAgent:
 
             r = c.post("/v1/agents/register", json=body)
             data = self._handle_response(r)
+
+            # Validate required fields from registration response
+            for field in ("challenge", "pow_challenge", "pow_difficulty"):
+                if field not in data:
+                    raise AVPServerError(
+                        f"Registration response missing required field '{field}'",
+                        200, str(data),
+                    )
             challenge = data["challenge"]
 
             # Step 2: Solve Proof-of-Work puzzle
