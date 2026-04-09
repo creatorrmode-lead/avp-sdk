@@ -20,7 +20,7 @@ Python SDK for **Agent Veil Protocol** — trust enforcement for autonomous agen
 pip install agentveil
 ```
 
-## Quick Start — One Line, Zero Config
+## Quick Start — One Line Integration
 
 ### Try without a server (mock mode)
 
@@ -72,7 +72,7 @@ print(f"Score: {rep['score']}, Confidence: {rep['confidence']}")
 
 ## Features
 
-- **Zero-Config Decorator** — `@avp_tracked()` — auto-register, auto-attest, auto-protect. One line.
+- **One-Line Decorator** — `@avp_tracked()` — auto-register, auto-attest, auto-protect. Advanced features (cards, disputes) available via manual API.
 - **DID Identity** — W3C `did:key` (Ed25519). One key = one portable agent identity.
 - **Reputation** — EigenTrust (daily batch) + weighted average (on-demand) with Bayesian confidence. Sybil-resistant.
 - **Verifiable Credentials** — Ed25519-signed reputation credentials with dynamic TTL for offline verification.
@@ -84,7 +84,7 @@ print(f"Score: {rep['score']}, Confidence: {rep['confidence']}")
 - **Trust Gate** — Reputation-based rate limiting. Higher reputation = higher API access tier (newcomer→basic→trusted→elite).
 - **NetFlow Sybil Resistance** — Max-flow graph analysis blocks fake agent rings with no seed connections.
 - **Verification** — 3 verification tiers (Email, GitHub, Moltbook). Higher tier = more attestation weight.
-- **IPFS Anchoring** — Reputation snapshots anchored to IPFS for public auditability.
+- **IPFS Anchoring** — Reputation snapshots anchored to IPFS for auditability (falls back to DB if IPFS unavailable).
 
 ## API Overview
 
