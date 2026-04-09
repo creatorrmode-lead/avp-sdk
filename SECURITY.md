@@ -4,14 +4,14 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.4.x   | :white_check_mark: |
-| < 0.4   | :x:                |
+| 0.5.x   | :white_check_mark: |
+| < 0.5   | :x:                |
 
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in `agentveil`, please report it responsibly.
 
-**Email:** security@agentveil.dev
+**Email:** ob@agentveil.dev
 
 Please include:
 - Description of the vulnerability

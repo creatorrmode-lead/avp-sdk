@@ -1,6 +1,10 @@
 # agentveil
 
-[![avp-sdk MCP server](https://glama.ai/mcp/servers/creatorrmode-lead/avp-sdk/badges/card.svg)](https://glama.ai/mcp/servers/creatorrmode-lead/avp-sdk)
+[![PyPI](https://img.shields.io/pypi/v/agentveil)](https://pypi.org/project/agentveil/)
+[![Python](https://img.shields.io/pypi/pyversions/agentveil)](https://pypi.org/project/agentveil/)
+[![Tests](https://github.com/creatorrmode-lead/avp-sdk/actions/workflows/tests.yml/badge.svg)](https://github.com/creatorrmode-lead/avp-sdk/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![MCP](https://glama.ai/mcp/servers/creatorrmode-lead/avp-sdk/badges/card.svg)](https://glama.ai/mcp/servers/creatorrmode-lead/avp-sdk)
 
 Python SDK for **Agent Veil Protocol** — trust enforcement for autonomous agents.
 
