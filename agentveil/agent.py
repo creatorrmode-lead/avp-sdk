@@ -638,6 +638,35 @@ class AVPAgent:
             r = c.get(f"/v1/reputation/{target}")
             return self._handle_response(r)
 
+    def can_trust(
+        self,
+        did: str,
+        min_tier: str = "trusted",
+        task_type: Optional[str] = None,
+    ) -> dict:
+        """
+        Advisory trust decision: should I delegate a task to this agent?
+
+        Checks if the agent's reputation tier meets the minimum requirement
+        and whether risk level is acceptable. Returns a decision with
+        explanation — NOT a guarantee.
+
+        Args:
+            did: Target agent DID
+            min_tier: Minimum required tier ("newcomer", "basic", "trusted", "elite")
+            task_type: Optional task category ("code_quality", "task_completion", etc.)
+
+        Returns:
+            dict with allowed, score, tier, risk_level, reason, disclaimer
+        """
+        params: dict[str, str] = {"min_tier": min_tier}
+        if task_type:
+            params["task_type"] = task_type
+
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.get(f"/v1/reputation/{did}/trust-check", params=params)
+            return self._handle_response(r)
+
     def get_reputation_bulk(self, dids: list[str]) -> dict:
         """
         Get reputation scores for multiple agents in one request (up to 100).
