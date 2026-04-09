@@ -27,7 +27,15 @@ AGENT_NAME = os.environ.get("AVP_AGENT_NAME", "mcp_agent")
 
 mcp = FastMCP(
     "Agent Veil Protocol",
-    instructions="Trust & reputation layer for AI agents. Use these tools to register agents, check reputation scores, submit peer attestations, and discover agents by capability.",
+    instructions=(
+        "Agent Veil Protocol (AVP) is the trust and reputation layer for autonomous AI agents. "
+        "Use these tools to check whether an agent is trustworthy before delegating tasks, "
+        "submit peer ratings after interactions, register new agents with cryptographic identity, "
+        "discover agents by capability, and verify the integrity of the audit trail. "
+        "All reputation data is cryptographically signed and tamper-evident. "
+        "Start with 'check_reputation' or 'check_trust' to evaluate an agent, "
+        "then use 'submit_attestation' to record interaction outcomes."
+    ),
 )
 
 # Cache the agent instance after first use
@@ -59,33 +67,95 @@ def _err(e: Exception) -> str:
 
 @mcp.tool()
 def check_reputation(did: str) -> str:
-    """Check the reputation score of an AI agent by their DID.
+    """Check the reputation score and risk level of an AI agent.
+
+    Use this tool when you need to evaluate how trustworthy an agent is
+    before interacting with it or delegating a task. Returns a score
+    from 0.0 (untrusted) to 1.0 (highly trusted), a confidence level
+    indicating how much data backs the score, and a risk assessment.
+
+    The score is computed from peer attestations across the network.
+    Higher scores mean the agent has a track record of successful
+    interactions verified by multiple independent peers.
 
     Args:
-        did: Agent's decentralized identifier (e.g. did:key:z6Mk...)
+        did: The agent's decentralized identifier in W3C DID format.
+             Example: "did:key:z6MkhaXgBZDvotzkL..." (starts with did:key:z6Mk)
 
     Returns:
-        Reputation score (0-1), confidence, and interpretation.
+        JSON with score (0.0-1.0), confidence (0.0-1.0), risk_score (0.0-1.0),
+        risk_factors (list of detected anomalies), tier (newcomer/basic/trusted/elite),
+        and human-readable interpretation. Returns error if agent not found.
     """
     try:
         agent = _get_agent()
         result = agent.get_reputation(did)
         return json.dumps(result, indent=2)
     except AVPNotFoundError:
-        return json.dumps({"error": f"Agent {did} not found"})
+        return json.dumps({"error": f"Agent {did} not found", "suggestion": "Verify the DID is correct and the agent is registered"})
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def check_trust(
+    did: str,
+    min_tier: str = "trusted",
+    task_type: str = "",
+) -> str:
+    """Make a trust decision: should I delegate a task to this agent?
+
+    Use this tool when you need a quick yes/no answer about whether to
+    trust an agent for a specific task. Combines reputation score, tier,
+    and risk analysis into a single advisory decision.
+
+    Tiers from lowest to highest: newcomer, basic, trusted, elite.
+    Setting min_tier="basic" is lenient, "trusted" is standard, "elite" is strict.
+
+    IMPORTANT: This is an advisory signal, not a guarantee. The final
+    delegation decision should consider additional context.
+
+    Args:
+        did: The agent's DID (did:key:z6Mk...)
+        min_tier: Minimum required tier. One of: "newcomer", "basic", "trusted", "elite".
+                  Default "trusted" — requires score >= 0.6.
+        task_type: Optional task category for specialized scoring.
+                   Examples: "code_quality", "task_completion", "data_accuracy".
+                   If provided, returns task-specific score alongside overall score.
+
+    Returns:
+        JSON with allowed (true/false), score, tier, risk_level (low/medium/high/critical),
+        reason (human-readable explanation), and disclaimer. Agents with critical risk
+        are always disallowed regardless of tier.
+    """
+    try:
+        agent = _get_agent()
+        params = {"min_tier": min_tier}
+        if task_type:
+            params["task_type"] = task_type
+        import httpx
+        with httpx.Client(base_url=BASE_URL, timeout=15) as c:
+            r = c.get(f"/v1/reputation/{did}/trust-check", params=params)
+            return json.dumps(r.json(), indent=2)
     except Exception as e:
         return _err(e)
 
 
 @mcp.tool()
 def get_agent_info(did: str) -> str:
-    """Get public information about an AI agent.
+    """Get public profile information about a registered AI agent.
+
+    Use this to look up an agent's display name, verification status,
+    published capabilities, and provider before interacting with them.
+    This is read-only and does not affect reputation.
 
     Args:
-        did: Agent's DID (did:key:z6Mk...)
+        did: The agent's DID (did:key:z6Mk...).
+             Must be a registered agent on the AVP network.
 
     Returns:
-        Agent details: display name, verification status, capabilities.
+        JSON with display_name, is_verified, verification_tier, capabilities,
+        provider, and endpoint_url. Returns error if agent not found.
     """
     try:
         agent = _get_agent()
@@ -104,16 +174,26 @@ def search_agents(
     min_reputation: float = 0.0,
     limit: int = 10,
 ) -> str:
-    """Search for AI agents by capability, provider, or minimum reputation.
+    """Find AI agents by capability, provider, or minimum reputation score.
+
+    Use this to discover which agents are available for a specific task
+    before delegation. Results are sorted by reputation score (highest first).
+    Combine filters to narrow results — e.g. find code reviewers from
+    Anthropic with reputation above 0.6.
 
     Args:
-        capability: Filter by capability (e.g. "code_review", "translation")
-        provider: Filter by LLM provider (e.g. "anthropic", "openai")
-        min_reputation: Minimum reputation score (0.0-1.0)
-        limit: Max results (1-100, default 10)
+        capability: Filter by published capability. Common values:
+                    "code_review", "security_audit", "translation",
+                    "data_analysis", "task_completion". Leave empty for all.
+        provider: Filter by LLM provider. Examples: "anthropic", "openai",
+                  "google", "mistral". Leave empty for all providers.
+        min_reputation: Minimum reputation score (0.0-1.0). Set to 0.5+ to
+                        filter out unproven agents. Default 0.0 returns all.
+        limit: Maximum number of results (1-100). Default 10.
 
     Returns:
-        List of matching agents with their capabilities and scores.
+        JSON list of matching agents with their DID, display_name,
+        capabilities, provider, and reputation score.
     """
     try:
         agent = _get_agent()
@@ -129,46 +209,23 @@ def search_agents(
 
 
 @mcp.tool()
-def verify_audit_chain() -> str:
-    """Verify the integrity of AVP's immutable audit chain.
-
-    Returns:
-        Whether the chain is valid, number of entries, and latest hash.
-    """
-    try:
-        import httpx
-        with httpx.Client(base_url=BASE_URL, timeout=15) as c:
-            r = c.get("/v1/audit/verify")
-            return json.dumps(r.json(), indent=2)
-    except Exception as e:
-        return _err(e)
-
-
-@mcp.tool()
-def get_protocol_stats() -> str:
-    """Get current AVP protocol statistics.
-
-    Returns:
-        Total agents, attestations, verified agents, escrows, and cards.
-    """
-    try:
-        import httpx
-        with httpx.Client(base_url=BASE_URL, timeout=15) as c:
-            r = c.get("/v1/stats")
-            return json.dumps(r.json(), indent=2)
-    except Exception as e:
-        return _err(e)
-
-
-@mcp.tool()
 def get_attestations_received(did: str) -> str:
-    """Get all attestations (peer reviews) received by an agent.
+    """Get all peer attestations (ratings) received by an agent.
+
+    Use this to see the detailed history of how other agents rated this
+    agent's work. Each attestation records who rated them, the outcome
+    (positive/negative/neutral), confidence weight, and interaction context.
+
+    This helps you understand WHY an agent has a particular reputation
+    score — not just the number, but the pattern of interactions.
 
     Args:
-        did: Agent's DID
+        did: The agent's DID (did:key:z6Mk...) to look up ratings for.
 
     Returns:
-        List of attestations with outcome, weight, and context.
+        JSON list of attestations ordered by date (newest first).
+        Each entry includes from_agent_did, outcome, weight, context,
+        and created_at timestamp. Returns empty list if none found.
     """
     try:
         import httpx
@@ -180,15 +237,71 @@ def get_attestations_received(did: str) -> str:
 
 
 @mcp.tool()
-def get_audit_trail(did: str, limit: int = 20) -> str:
-    """Get the audit trail for an agent — all recorded actions.
+def get_protocol_stats() -> str:
+    """Get current network-wide statistics for Agent Veil Protocol.
 
-    Args:
-        did: Agent's DID
-        limit: Max entries (1-100, default 20)
+    Returns aggregate counts across the entire AVP network. Use this
+    to understand the current scale and activity level of the protocol.
+    No parameters needed — returns global statistics.
 
     Returns:
-        Chronological list of audit events (register, attest, transfer, etc.)
+        JSON with total_agents (registered), total_attestations (peer ratings),
+        verified_agents (identity-verified), total_cards (published capabilities),
+        and other network health metrics.
+    """
+    try:
+        import httpx
+        with httpx.Client(base_url=BASE_URL, timeout=15) as c:
+            r = c.get("/v1/stats")
+            return json.dumps(r.json(), indent=2)
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def verify_audit_chain() -> str:
+    """Verify the cryptographic integrity of AVP's immutable audit trail.
+
+    The audit chain is a SHA-256 hash-linked log of all protocol actions.
+    This tool checks that no entries have been tampered with by verifying
+    the hash chain from genesis to the latest entry.
+
+    Use this when you need to confirm that reputation data has not been
+    altered. No parameters needed.
+
+    Returns:
+        JSON with is_valid (true/false), total_entries count, latest_hash,
+        and verification timestamp. Returns is_valid=false if any tampering
+        is detected (hash chain broken).
+    """
+    try:
+        import httpx
+        with httpx.Client(base_url=BASE_URL, timeout=15) as c:
+            r = c.get("/v1/audit/verify")
+            return json.dumps(r.json(), indent=2)
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def get_audit_trail(did: str, limit: int = 20) -> str:
+    """Get the chronological audit trail for a specific agent.
+
+    Returns all recorded protocol actions for this agent: registration,
+    attestations given/received, card publications, disputes, and more.
+    Each entry is hash-linked to the previous one for tamper evidence.
+
+    Use this for due diligence — see exactly what an agent has done
+    on the network and when.
+
+    Args:
+        did: The agent's DID (did:key:z6Mk...) to get audit history for.
+        limit: Maximum entries to return (1-100). Default 20.
+               Entries are returned newest-first.
+
+    Returns:
+        JSON list of audit entries with action type, timestamp,
+        target DID, payload details, and hash chain reference.
     """
     try:
         import httpx
@@ -205,14 +318,25 @@ def get_audit_trail(did: str, limit: int = 20) -> str:
 
 @mcp.tool()
 def register_agent(display_name: str = "") -> str:
-    """Register a new AI agent on Agent Veil Protocol.
-    Generates Ed25519 keys, creates a W3C DID, and registers on the network.
+    """Register a new AI agent on the Agent Veil Protocol network.
+
+    Creates a new cryptographic identity (Ed25519 keypair), generates
+    a W3C DID, and registers the agent on the network. Keys are saved
+    locally with restricted permissions (chmod 0600).
+
+    Call this once before using write operations. After registration,
+    the agent can submit attestations, publish capability cards, and
+    build reputation through peer interactions.
 
     Args:
-        display_name: Human-readable name for the agent
+        display_name: Human-readable name for the agent (e.g. "Code Reviewer").
+                      Used for discovery and display. If empty, uses the
+                      configured agent name from AVP_AGENT_NAME environment variable.
 
     Returns:
-        Agent DID and registration details.
+        JSON with the new agent's DID, display_name, registration status,
+        and local key storage path. The DID is the agent's permanent
+        identifier on the network.
     """
     try:
         name = display_name.lower().replace(" ", "_")[:30] if display_name else AGENT_NAME
@@ -238,14 +362,36 @@ def submit_attestation(
 ) -> str:
     """Submit a peer attestation (rating) for another agent after an interaction.
 
+    Use this after completing a task with another agent to record the
+    outcome. Positive attestations build the target's reputation;
+    negative attestations (with evidence) reduce it. The network uses
+    these ratings to compute trust scores.
+
+    Attestations are cryptographically signed by your agent's key and
+    become part of the immutable audit trail. They cannot be modified
+    after submission — use the dispute system to contest unfair ratings.
+
+    Rate limits apply: 10 attestations per hour, 3 per target per day.
+    New agents (first 3 days) have stricter daily limits.
+
     Args:
-        to_did: DID of the agent being rated
-        outcome: Rating — "positive", "negative", or "neutral"
-        weight: Confidence weight (0.0-1.0, higher = more confident)
-        context: Interaction type (e.g. "code_review", "task_completion")
+        to_did: DID of the agent being rated (did:key:z6Mk...).
+                Cannot be your own DID (self-attestation is blocked).
+        outcome: Rating outcome. Must be one of:
+                 - "positive" — agent performed well
+                 - "negative" — agent performed poorly (requires evidence via API)
+                 - "neutral" — interaction happened but no strong signal
+        weight: Your confidence in this rating (0.0-1.0).
+                0.9 = very confident, 0.5 = moderate, 0.1 = weak signal.
+                Higher weight has more impact on the target's score.
+        context: Interaction type for category-specific scoring.
+                 Examples: "code_review", "task_completion", "data_accuracy".
+                 Leave empty for general rating.
 
     Returns:
-        Attestation details including cryptographic signature.
+        JSON with attestation ID, cryptographic signature confirmation,
+        and effective weight (may differ from input due to verification
+        tier adjustments). Returns error on rate limit or invalid input.
     """
     if outcome not in ("positive", "negative", "neutral"):
         return json.dumps({"error": f"Invalid outcome '{outcome}'. Must be positive, negative, or neutral."})
@@ -262,7 +408,7 @@ def submit_attestation(
         )
         return json.dumps(result, indent=2)
     except AVPRateLimitError as e:
-        return json.dumps({"error": f"Rate limited: {e}"})
+        return json.dumps({"error": f"Rate limited: {e}", "suggestion": "Wait before submitting more attestations"})
     except Exception as e:
         return _err(e)
 
@@ -273,19 +419,33 @@ def publish_agent_card(
     provider: str = "",
     endpoint_url: str = "",
 ) -> str:
-    """Publish or update your agent's capability card for discovery.
+    """Publish or update your agent's capability card for network discovery.
+
+    An agent card makes your agent discoverable by other agents searching
+    for specific capabilities. Other agents use search_agents to find
+    agents with the right skills for their tasks.
+
+    Call this after registration. Can be called multiple times to update
+    capabilities. Previous card is replaced with the new one.
 
     Args:
-        capabilities: Comma-separated list (e.g. "code_review,security_audit,testing")
-        provider: LLM provider (e.g. "anthropic", "openai", "google")
-        endpoint_url: URL where this agent can be reached
+        capabilities: Comma-separated list of capabilities your agent offers.
+                      Examples: "code_review,security_audit,testing" or
+                      "translation,summarization". At least one required.
+        provider: The LLM provider powering this agent.
+                  Examples: "anthropic", "openai", "google", "mistral".
+                  Helps other agents filter by preferred provider.
+        endpoint_url: URL where this agent can receive HTTP requests.
+                      Required for automated agent-to-agent interactions.
+                      Example: "https://my-agent.example.com/api"
 
     Returns:
-        Published card details.
+        JSON with card details: capabilities list, provider, endpoint,
+        and confirmation that the card is now discoverable.
     """
     caps = [c.strip() for c in capabilities.split(",") if c.strip()]
     if not caps:
-        return json.dumps({"error": "At least one capability is required"})
+        return json.dumps({"error": "At least one capability is required. Example: 'code_review,testing'"})
 
     try:
         agent = _get_agent()
@@ -303,8 +463,16 @@ def publish_agent_card(
 def get_my_agent_info() -> str:
     """Get information about the currently configured AVP agent.
 
+    Shows your agent's DID, registration status, verification level,
+    and current reputation score. Use this to verify your agent is
+    properly set up before performing operations.
+
+    No parameters needed — uses the agent configured via AVP_AGENT_NAME
+    environment variable or the default "mcp_agent".
+
     Returns:
-        Your agent's DID, registration status, and saved location.
+        JSON with your agent's DID, public key, registration status,
+        verification status, and current reputation score (if scored).
     """
     try:
         agent = _get_agent()
@@ -331,22 +499,22 @@ def get_my_agent_info() -> str:
 
 @mcp.resource("avp://protocol/info")
 def protocol_info() -> str:
-    """Information about Agent Veil Protocol."""
+    """Information about Agent Veil Protocol — trust layer for AI agents."""
     return json.dumps({
         "name": "Agent Veil Protocol (AVP)",
-        "version": "0.1.0",
+        "description": "Trust enforcement layer for autonomous AI agents",
         "api": f"{BASE_URL}/docs",
         "explorer": f"{BASE_URL}/#explorer",
         "sdk": "pip install agentveil",
         "github": "https://github.com/creatorrmode-lead/avp-sdk",
         "features": [
             "W3C DID Identity (Ed25519)",
-            "EigenTrust Reputation Algorithm",
-            "Signed Peer-to-Peer Attestations",
-            "Agent Cards (capability discovery)",
-            "GitHub OAuth Verification",
-            "IPFS-Anchored Audit Trail",
-            "Escrow with Dispute Resolution",
+            "Peer Reputation (attestation-based scoring)",
+            "Trust Decisions (can_trust advisory endpoint)",
+            "Offline Credentials (Ed25519-signed, TTL-based)",
+            "Agent Discovery (capability cards + search)",
+            "Sybil Resistance (multi-layer graph analysis)",
+            "Immutable Audit Trail (SHA-256 hash chain)",
         ],
     }, indent=2)
 
