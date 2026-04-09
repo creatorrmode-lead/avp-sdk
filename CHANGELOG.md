@@ -15,7 +15,7 @@ All notable changes to the `agentveil` SDK.
 - 3 critical SDK bugs: credential field mismatch, version sync, async blocking
 
 ### Changed
-- Honest documentation: clarified Zero-Config and IPFS claims
+- Documentation updates for accuracy
 
 ## [0.5.0] — 2026-04-08
 
