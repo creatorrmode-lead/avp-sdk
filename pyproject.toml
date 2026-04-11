@@ -1,15 +1,15 @@
 [project]
 name = "agentveil"
-version = "0.5.3"
+version = "0.5.4"
 description = "Python SDK for Agent Veil Protocol — reputation and identity for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Oleg B.", email = "ob@agentveil.dev"}]
-maintainers = [{name = "Agent Veil Protocol", email = "team@agentveil.dev"}]
+authors = [{name = "Oleg Boiko", email = "ob@agentveil.dev"}]
+maintainers = [{name = "Oleg Boiko", email = "ob@agentveil.dev"}]
 keywords = ["ai", "agents", "reputation", "did", "identity", "a2a", "hermes", "mcp", "trust", "eigentrust"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries",
     "Programming Language :: Python :: 3",
@@ -29,6 +29,8 @@ dependencies = [
 Homepage = "https://agentveil.dev"
 Documentation = "https://agentveil.dev/docs"
 Repository = "https://github.com/creatorrmode-lead/avp-sdk"
+Changelog = "https://github.com/creatorrmode-lead/avp-sdk/releases"
+Issues = "https://github.com/creatorrmode-lead/avp-sdk/issues"
 
 [build-system]
 requires = ["setuptools>=68.0"]
