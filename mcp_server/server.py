@@ -12,8 +12,10 @@ import json
 import os
 import sys
 import logging
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 # Add parent dir so we can import agentveil
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -66,26 +68,31 @@ def _err(e: Exception) -> str:
 # ============================================================
 
 @mcp.tool()
-def check_reputation(did: str) -> str:
+def check_reputation(
+    did: Annotated[str, Field(description="Agent's decentralized identifier in W3C DID format. Must start with 'did:key:z6Mk'. Example: 'did:key:z6MkhaXgBZDvotzkL...'")],
+) -> str:
     """Check the reputation score and risk level of an AI agent.
 
-    Use this tool when you need to evaluate how trustworthy an agent is
-    before interacting with it or delegating a task. Returns a score
-    from 0.0 (untrusted) to 1.0 (highly trusted), a confidence level
-    indicating how much data backs the score, and a risk assessment.
+    Use this BEFORE delegating a task to evaluate trustworthiness.
+    For a quick yes/no trust decision, use check_trust instead.
+    For detailed rating history, use get_attestations_received.
 
     The score is computed from peer attestations across the network.
-    Higher scores mean the agent has a track record of successful
-    interactions verified by multiple independent peers.
+    Higher scores mean a track record of successful interactions
+    verified by multiple independent peers.
+
+    Read-only — does not modify any data or affect the target agent's score.
 
     Args:
         did: The agent's decentralized identifier in W3C DID format.
-             Example: "did:key:z6MkhaXgBZDvotzkL..." (starts with did:key:z6Mk)
+             Must start with "did:key:z6Mk". Example: "did:key:z6MkhaXgBZDvotzkL..."
 
     Returns:
         JSON with score (0.0-1.0), confidence (0.0-1.0), risk_score (0.0-1.0),
         risk_factors (list of detected anomalies), tier (newcomer/basic/trusted/elite),
-        and human-readable interpretation. Returns error if agent not found.
+        and human-readable interpretation.
+        Returns {"error": "Agent not found"} if DID is not registered.
+        Returns {"error": "..."} on network or server errors.
     """
     try:
         agent = _get_agent()
@@ -99,34 +106,34 @@ def check_reputation(did: str) -> str:
 
 @mcp.tool()
 def check_trust(
-    did: str,
-    min_tier: str = "trusted",
-    task_type: str = "",
+    did: Annotated[str, Field(description="Agent's DID to evaluate. Format: did:key:z6Mk...")],
+    min_tier: Annotated[str, Field(description="Minimum required trust tier. One of: newcomer, basic, trusted, elite. Default: trusted")] = "trusted",
+    task_type: Annotated[str, Field(description="Optional task category for specialized scoring. Examples: code_quality, task_completion, data_accuracy")] = "",
 ) -> str:
     """Make a trust decision: should I delegate a task to this agent?
 
-    Use this tool when you need a quick yes/no answer about whether to
-    trust an agent for a specific task. Combines reputation score, tier,
-    and risk analysis into a single advisory decision.
+    Use this for a quick yes/no answer about whether to trust an agent.
+    For detailed scores and risk factors, use check_reputation instead.
+    For rating history, use get_attestations_received.
 
     Tiers from lowest to highest: newcomer, basic, trusted, elite.
-    Setting min_tier="basic" is lenient, "trusted" is standard, "elite" is strict.
+    Agents with critical risk are always disallowed regardless of tier.
 
-    IMPORTANT: This is an advisory signal, not a guarantee. The final
-    delegation decision should consider additional context.
+    Read-only — does not modify any data.
+
+    IMPORTANT: This is an advisory signal, not a guarantee.
 
     Args:
         did: The agent's DID (did:key:z6Mk...)
         min_tier: Minimum required tier. One of: "newcomer", "basic", "trusted", "elite".
-                  Default "trusted" — requires score >= 0.6.
+                  Default "trusted".
         task_type: Optional task category for specialized scoring.
                    Examples: "code_quality", "task_completion", "data_accuracy".
-                   If provided, returns task-specific score alongside overall score.
 
     Returns:
         JSON with allowed (true/false), score, tier, risk_level (low/medium/high/critical),
-        reason (human-readable explanation), and disclaimer. Agents with critical risk
-        are always disallowed regardless of tier.
+        reason (human-readable explanation), and disclaimer.
+        Returns {"error": "..."} if DID not found or on network errors.
     """
     try:
         agent = _get_agent()
@@ -142,12 +149,19 @@ def check_trust(
 
 
 @mcp.tool()
-def get_agent_info(did: str) -> str:
+def get_agent_info(
+    did: Annotated[str, Field(description="Agent's DID to look up. Format: did:key:z6Mk... Must be a registered agent")],
+) -> str:
     """Get public profile information about a registered AI agent.
 
-    Use this to look up an agent's display name, verification status,
-    published capabilities, and provider before interacting with them.
-    This is read-only and does not affect reputation.
+    Returns display name, verification status, capabilities, and provider.
+    Use this when you already have a specific DID and need profile data.
+
+    For trust assessment, use check_reputation or check_trust instead.
+    For rating history, use get_attestations_received.
+    To find agents by capability, use search_agents.
+
+    Read-only — does not affect reputation or any stored data.
 
     Args:
         did: The agent's DID (did:key:z6Mk...).
@@ -155,7 +169,8 @@ def get_agent_info(did: str) -> str:
 
     Returns:
         JSON with display_name, is_verified, verification_tier, capabilities,
-        provider, and endpoint_url. Returns error if agent not found.
+        provider, and endpoint_url.
+        Returns {"error": "Agent not found"} if DID is not registered.
     """
     try:
         agent = _get_agent()
@@ -169,31 +184,32 @@ def get_agent_info(did: str) -> str:
 
 @mcp.tool()
 def search_agents(
-    capability: str = "",
-    provider: str = "",
-    min_reputation: float = 0.0,
-    limit: int = 10,
+    capability: Annotated[str, Field(description="Filter by capability. Examples: code_review, security_audit, translation, data_analysis. Empty returns all")] = "",
+    provider: Annotated[str, Field(description="Filter by LLM provider. Examples: anthropic, openai, google, mistral. Empty returns all")] = "",
+    min_reputation: Annotated[float, Field(description="Minimum reputation score 0.0-1.0. Set 0.5+ to exclude unproven agents. Default: 0.0")] = 0.0,
+    limit: Annotated[int, Field(description="Maximum results to return, 1-100. Default: 10")] = 10,
 ) -> str:
     """Find AI agents by capability, provider, or minimum reputation score.
 
-    Use this to discover which agents are available for a specific task
-    before delegation. Results are sorted by reputation score (highest first).
-    Combine filters to narrow results — e.g. find code reviewers from
-    Anthropic with reputation above 0.6.
+    Use this to discover available agents for a task before delegation.
+    Results are sorted by reputation score (highest first).
+    Combine filters to narrow results.
+
+    Use get_agent_info when you already have a specific DID.
+    Use check_reputation or check_trust to evaluate a found agent.
+
+    Read-only — does not modify any data.
 
     Args:
-        capability: Filter by published capability. Common values:
-                    "code_review", "security_audit", "translation",
-                    "data_analysis", "task_completion". Leave empty for all.
-        provider: Filter by LLM provider. Examples: "anthropic", "openai",
-                  "google", "mistral". Leave empty for all providers.
-        min_reputation: Minimum reputation score (0.0-1.0). Set to 0.5+ to
-                        filter out unproven agents. Default 0.0 returns all.
+        capability: Filter by published capability. Examples:
+                    "code_review", "security_audit", "translation". Empty for all.
+        provider: Filter by LLM provider. Examples: "anthropic", "openai". Empty for all.
+        min_reputation: Minimum reputation score (0.0-1.0). Default 0.0 returns all.
         limit: Maximum number of results (1-100). Default 10.
 
     Returns:
-        JSON list of matching agents with their DID, display_name,
-        capabilities, provider, and reputation score.
+        JSON list of matching agents with DID, display_name, capabilities,
+        provider, and reputation score. Returns empty list if no matches.
     """
     try:
         agent = _get_agent()
@@ -209,15 +225,20 @@ def search_agents(
 
 
 @mcp.tool()
-def get_attestations_received(did: str) -> str:
+def get_attestations_received(
+    did: Annotated[str, Field(description="Agent's DID to look up ratings for. Format: did:key:z6Mk...")],
+) -> str:
     """Get all peer attestations (ratings) received by an agent.
 
-    Use this to see the detailed history of how other agents rated this
-    agent's work. Each attestation records who rated them, the outcome
-    (positive/negative/neutral), confidence weight, and interaction context.
+    Shows the detailed history of how other agents rated this agent.
+    Use this to understand WHY an agent has a particular score —
+    not just the number, but the pattern of interactions.
 
-    This helps you understand WHY an agent has a particular reputation
-    score — not just the number, but the pattern of interactions.
+    Use check_reputation for the computed trust score.
+    Use check_trust for a simple yes/no delegation decision.
+
+    Read-only — safe to call repeatedly. Does not affect the target
+    agent's reputation or any stored data.
 
     Args:
         did: The agent's DID (did:key:z6Mk...) to look up ratings for.
@@ -226,6 +247,7 @@ def get_attestations_received(did: str) -> str:
         JSON list of attestations ordered by date (newest first).
         Each entry includes from_agent_did, outcome, weight, context,
         and created_at timestamp. Returns empty list if none found.
+        Returns {"error": "..."} on network errors.
     """
     try:
         import httpx
@@ -240,14 +262,18 @@ def get_attestations_received(did: str) -> str:
 def get_protocol_stats() -> str:
     """Get current network-wide statistics for Agent Veil Protocol.
 
-    Returns aggregate counts across the entire AVP network. Use this
-    to understand the current scale and activity level of the protocol.
-    No parameters needed — returns global statistics.
+    Returns aggregate counts across the entire AVP network.
+    No authentication required. No parameters needed.
+
+    Use this to check network health or activity levels before registration.
+    For individual agent data, use get_agent_info or check_reputation instead.
+
+    Read-only — safe to call at any time without side effects.
 
     Returns:
         JSON with total_agents (registered), total_attestations (peer ratings),
         verified_agents (identity-verified), total_cards (published capabilities),
-        and other network health metrics.
+        and protocol version. Returns {"error": "..."} on network errors.
     """
     try:
         import httpx
@@ -262,17 +288,18 @@ def get_protocol_stats() -> str:
 def verify_audit_chain() -> str:
     """Verify the cryptographic integrity of AVP's immutable audit trail.
 
-    The audit chain is a SHA-256 hash-linked log of all protocol actions.
-    This tool checks that no entries have been tampered with by verifying
-    the hash chain from genesis to the latest entry.
+    Checks that no audit entries have been tampered with by verifying
+    the SHA-256 hash chain from genesis to the latest entry.
 
-    Use this when you need to confirm that reputation data has not been
-    altered. No parameters needed.
+    Use this before relying on audit data for compliance or dispute resolution.
+    For an individual agent's audit history, use get_audit_trail instead.
+
+    Read-only — no authentication required. Safe to call at any time.
 
     Returns:
         JSON with is_valid (true/false), total_entries count, latest_hash,
-        and verification timestamp. Returns is_valid=false if any tampering
-        is detected (hash chain broken).
+        and verification timestamp. is_valid=false means tampering detected.
+        Returns {"error": "..."} on network errors.
     """
     try:
         import httpx
@@ -284,24 +311,31 @@ def verify_audit_chain() -> str:
 
 
 @mcp.tool()
-def get_audit_trail(did: str, limit: int = 20) -> str:
+def get_audit_trail(
+    did: Annotated[str, Field(description="Agent's DID to get audit history for. Format: did:key:z6Mk...")],
+    limit: Annotated[int, Field(description="Maximum entries to return, 1-100. Newest first. Default: 20")] = 20,
+) -> str:
     """Get the chronological audit trail for a specific agent.
 
-    Returns all recorded protocol actions for this agent: registration,
-    attestations given/received, card publications, disputes, and more.
+    Returns all recorded protocol actions: registration, attestations
+    given/received, card publications, disputes, and more.
     Each entry is hash-linked to the previous one for tamper evidence.
 
-    Use this for due diligence — see exactly what an agent has done
-    on the network and when.
+    Use this for due diligence on a specific agent.
+    Use verify_audit_chain to check integrity of the entire trail.
+    No authentication required — audit data is public.
+
+    Read-only — does not affect the agent or any stored data.
 
     Args:
         did: The agent's DID (did:key:z6Mk...) to get audit history for.
-        limit: Maximum entries to return (1-100). Default 20.
-               Entries are returned newest-first.
+        limit: Maximum entries to return (1-100). Default 20. Newest first.
 
     Returns:
         JSON list of audit entries with action type, timestamp,
         target DID, payload details, and hash chain reference.
+        Returns empty list if no entries found.
+        Returns {"error": "..."} on network errors.
     """
     try:
         import httpx
@@ -317,26 +351,32 @@ def get_audit_trail(did: str, limit: int = 20) -> str:
 # ============================================================
 
 @mcp.tool()
-def register_agent(display_name: str = "") -> str:
+def register_agent(
+    display_name: Annotated[str, Field(description="Human-readable name for the agent. Example: 'Code Reviewer'. If empty, uses AVP_AGENT_NAME env var")] = "",
+) -> str:
     """Register a new AI agent on the Agent Veil Protocol network.
 
-    Creates a new cryptographic identity (Ed25519 keypair), generates
-    a W3C DID, and registers the agent on the network. Keys are saved
-    locally with restricted permissions (chmod 0600).
+    Creates a cryptographic identity (Ed25519 keypair), generates a W3C DID,
+    and registers the agent. Keys are saved locally to ~/.avp/agents/
+    with restricted permissions (chmod 0600).
 
-    Call this once before using write operations. After registration,
-    the agent can submit attestations, publish capability cards, and
-    build reputation through peer interactions.
+    IMPORTANT: Registration is irreversible. The DID becomes the agent's
+    permanent identifier. Keys cannot be regenerated for the same DID —
+    keep the local key file safe.
+
+    Call this once before using write operations (submit_attestation,
+    publish_agent_card). Use get_my_agent_info to verify setup afterward.
+
+    Side effects: creates local key file, registers agent on the network.
 
     Args:
-        display_name: Human-readable name for the agent (e.g. "Code Reviewer").
-                      Used for discovery and display. If empty, uses the
-                      configured agent name from AVP_AGENT_NAME environment variable.
+        display_name: Human-readable name (e.g. "Code Reviewer").
+                      If empty, uses AVP_AGENT_NAME environment variable.
 
     Returns:
         JSON with the new agent's DID, display_name, registration status,
-        and local key storage path. The DID is the agent's permanent
-        identifier on the network.
+        and local key storage path.
+        Returns {"error": "..."} if registration fails (network error, name conflict).
     """
     try:
         name = display_name.lower().replace(" ", "_")[:30] if display_name else AGENT_NAME
@@ -355,43 +395,36 @@ def register_agent(display_name: str = "") -> str:
 
 @mcp.tool()
 def submit_attestation(
-    to_did: str,
-    outcome: str = "positive",
-    weight: float = 0.9,
-    context: str = "",
+    to_did: Annotated[str, Field(description="DID of the agent being rated. Format: did:key:z6Mk... Cannot be your own DID")],
+    outcome: Annotated[str, Field(description="Rating: 'positive' (performed well), 'negative' (performed poorly), or 'neutral' (no strong signal)")] = "positive",
+    weight: Annotated[float, Field(description="Confidence in this rating, 0.0-1.0. Higher = more impact on target's score. Default: 0.9")] = 0.9,
+    context: Annotated[str, Field(description="Interaction type. Examples: code_review, task_completion, data_accuracy. Empty for general")] = "",
 ) -> str:
     """Submit a peer attestation (rating) for another agent after an interaction.
 
-    Use this after completing a task with another agent to record the
-    outcome. Positive attestations build the target's reputation;
-    negative attestations (with evidence) reduce it. The network uses
-    these ratings to compute trust scores.
+    Records your evaluation of another agent's performance. This is the
+    primary mechanism for building reputation on the network.
 
-    Attestations are cryptographically signed by your agent's key and
-    become part of the immutable audit trail. They cannot be modified
-    after submission — use the dispute system to contest unfair ratings.
+    IMPORTANT: Attestations are cryptographically signed and immutable —
+    they cannot be modified or deleted after submission. Use the dispute
+    system to contest unfair ratings received.
 
-    Rate limits apply: 10 attestations per hour, 3 per target per day.
-    New agents (first 3 days) have stricter daily limits.
+    Side effects: permanently modifies the target agent's attestation
+    history and may change their computed reputation score.
+
+    Requires a registered agent identity (call register_agent first).
+    Self-attestation (rating yourself) is blocked.
 
     Args:
         to_did: DID of the agent being rated (did:key:z6Mk...).
-                Cannot be your own DID (self-attestation is blocked).
-        outcome: Rating outcome. Must be one of:
-                 - "positive" — agent performed well
-                 - "negative" — agent performed poorly (requires evidence via API)
-                 - "neutral" — interaction happened but no strong signal
-        weight: Your confidence in this rating (0.0-1.0).
-                0.9 = very confident, 0.5 = moderate, 0.1 = weak signal.
-                Higher weight has more impact on the target's score.
-        context: Interaction type for category-specific scoring.
-                 Examples: "code_review", "task_completion", "data_accuracy".
-                 Leave empty for general rating.
+        outcome: Must be "positive", "negative", or "neutral".
+        weight: Confidence (0.0-1.0). Default 0.9.
+        context: Interaction type for category-specific scoring. Empty for general.
 
     Returns:
-        JSON with attestation ID, cryptographic signature confirmation,
-        and effective weight (may differ from input due to verification
-        tier adjustments). Returns error on rate limit or invalid input.
+        JSON with attestation ID, signature confirmation, and effective weight.
+        Returns {"error": "Rate limited"} if limits exceeded.
+        Returns {"error": "..."} on invalid input or network errors.
     """
     if outcome not in ("positive", "negative", "neutral"):
         return json.dumps({"error": f"Invalid outcome '{outcome}'. Must be positive, negative, or neutral."})
@@ -415,33 +448,35 @@ def submit_attestation(
 
 @mcp.tool()
 def publish_agent_card(
-    capabilities: str,
-    provider: str = "",
-    endpoint_url: str = "",
+    capabilities: Annotated[str, Field(description="Comma-separated capabilities. Examples: 'code_review,security_audit,testing'. At least one required")],
+    provider: Annotated[str, Field(description="LLM provider name. Examples: anthropic, openai, google, mistral. Optional")] = "",
+    endpoint_url: Annotated[str, Field(description="HTTP endpoint for agent-to-agent interactions. Example: 'https://my-agent.example.com/api'. Optional")] = "",
 ) -> str:
     """Publish or update your agent's capability card for network discovery.
 
-    An agent card makes your agent discoverable by other agents searching
-    for specific capabilities. Other agents use search_agents to find
-    agents with the right skills for their tasks.
+    Makes your agent discoverable by other agents using search_agents.
 
-    Call this after registration. Can be called multiple times to update
-    capabilities. Previous card is replaced with the new one.
+    IMPORTANT: This operation is idempotent — calling it again replaces
+    the previous card entirely. The card becomes publicly visible to all
+    agents on the network immediately.
+
+    Requires a registered agent identity (call register_agent first).
+    Use search_agents afterward to verify your card is discoverable.
+    Use get_my_agent_info to check your current registration status.
+
+    Side effects: creates or replaces your public capability card.
+    No effect on other agents' data.
 
     Args:
-        capabilities: Comma-separated list of capabilities your agent offers.
-                      Examples: "code_review,security_audit,testing" or
-                      "translation,summarization". At least one required.
-        provider: The LLM provider powering this agent.
-                  Examples: "anthropic", "openai", "google", "mistral".
-                  Helps other agents filter by preferred provider.
-        endpoint_url: URL where this agent can receive HTTP requests.
-                      Required for automated agent-to-agent interactions.
-                      Example: "https://my-agent.example.com/api"
+        capabilities: Comma-separated capabilities. At least one required.
+                      Examples: "code_review,security_audit,testing".
+        provider: LLM provider powering this agent. Helps discovery filtering.
+        endpoint_url: URL for receiving HTTP requests from other agents.
 
     Returns:
         JSON with card details: capabilities list, provider, endpoint,
-        and confirmation that the card is now discoverable.
+        and confirmation. Returns {"error": "..."} if not registered
+        or on invalid input.
     """
     caps = [c.strip() for c in capabilities.split(",") if c.strip()]
     if not caps:
@@ -463,16 +498,22 @@ def publish_agent_card(
 def get_my_agent_info() -> str:
     """Get information about the currently configured AVP agent.
 
-    Shows your agent's DID, registration status, verification level,
-    and current reputation score. Use this to verify your agent is
-    properly set up before performing operations.
+    Shows your own DID, registration status, verification level,
+    and current reputation score. Use this to verify setup before
+    calling write operations (submit_attestation, publish_agent_card).
 
-    No parameters needed — uses the agent configured via AVP_AGENT_NAME
+    Unlike get_agent_info (which looks up any agent by DID), this
+    returns your own agent's data including private registration details.
+
+    No parameters — uses the agent configured via AVP_AGENT_NAME
     environment variable or the default "mcp_agent".
 
+    Read-only — safe to call at any time without side effects.
+
     Returns:
-        JSON with your agent's DID, public key, registration status,
-        verification status, and current reputation score (if scored).
+        JSON with DID, public key, registration status, verification status,
+        and current reputation score (or "not yet scored" if no attestations).
+        Returns {"error": "..."} if agent configuration is missing or invalid.
     """
     try:
         agent = _get_agent()
