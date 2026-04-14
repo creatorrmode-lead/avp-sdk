@@ -35,6 +35,16 @@ class AVPMockAgent(AVPAgent):
     """
 
     def __init__(self, private_key: bytes, name: str = "agent"):
+        """
+        Initialize mock agent with a private key.
+
+        Uses a dummy base_url since no real HTTP calls are made.
+        Reputation starts at 0.75 with an empty attestation list.
+
+        Args:
+            private_key: Ed25519 private key bytes
+            name: Agent name for identification
+        """
         # Initialize with a dummy base_url — never used
         super().__init__(
             base_url="mock://localhost",
@@ -66,6 +76,20 @@ class AVPMockAgent(AVPAgent):
         endpoint_url: Optional[str] = None,
         provider: Optional[str] = None,
     ) -> dict:
+        """
+        Mock registration — instantly marks agent as registered and verified.
+
+        No HTTP call or Proof-of-Work is performed. Always succeeds.
+
+        Args:
+            display_name: Optional human-readable name (ignored in mock)
+            capabilities: Agent capabilities (ignored in mock)
+            endpoint_url: URL where this agent can be reached (ignored in mock)
+            provider: LLM provider (ignored in mock)
+
+        Returns:
+            dict with 'did', 'agent_address', and 'challenge'
+        """
         self._is_registered = True
         self._is_verified = True
         log.info(f"Mock registered: {self._did[:40]}...")
@@ -83,6 +107,17 @@ class AVPMockAgent(AVPAgent):
         provider: Optional[str] = None,
         endpoint_url: Optional[str] = None,
     ) -> dict:
+        """
+        Mock publish — returns a fake card without contacting the server.
+
+        Args:
+            capabilities: List of capabilities (e.g. ["code_review", "testing"])
+            provider: LLM provider (e.g. "anthropic", "openai")
+            endpoint_url: URL where this agent can be reached
+
+        Returns:
+            dict with 'card_id', 'did', 'capabilities', 'provider', 'endpoint_url'
+        """
         return {
             "card_id": f"mock-card-{uuid.uuid4().hex[:8]}",
             "did": self._did,
@@ -98,6 +133,19 @@ class AVPMockAgent(AVPAgent):
         min_reputation: Optional[float] = None,
         limit: int = 20,
     ) -> list[dict]:
+        """
+        Mock search — returns two fake peer agents with realistic data.
+
+        Args:
+            capability: Filter by capability name
+            provider: Filter by LLM provider
+            min_reputation: Minimum reputation score (unused in mock)
+            limit: Max results to return (unused in mock, always returns 2)
+
+        Returns:
+            list of dicts, each with 'did', 'display_name', 'capabilities',
+            'provider', and 'reputation_score'
+        """
         # Generate two fake peer agents
         peer1_key = SigningKey.generate()
         peer2_key = SigningKey.generate()
@@ -131,6 +179,26 @@ class AVPMockAgent(AVPAgent):
         context: Optional[str] = None,
         evidence_hash: Optional[str] = None,
     ) -> dict:
+        """
+        Mock attestation — records locally and adjusts mock reputation.
+
+        Validates outcome and weight, stores the attestation in memory,
+        and adjusts the mock reputation score accordingly.
+
+        Args:
+            to_did: DID of agent being rated
+            outcome: "positive", "negative", or "neutral"
+            weight: Attestation weight (0.0 to 1.0)
+            context: Optional context description
+            evidence_hash: Optional hash of supporting evidence
+
+        Returns:
+            dict with 'attestation_id', 'from_did', 'to_did', 'outcome',
+            'weight', and 'ipfs_cid'
+
+        Raises:
+            AVPValidationError: If outcome is invalid or weight out of range
+        """
         if outcome not in ("positive", "negative", "neutral"):
             from agentveil.exceptions import AVPValidationError
             raise AVPValidationError(f"Invalid outcome: {outcome}", 400, "")
@@ -164,6 +232,21 @@ class AVPMockAgent(AVPAgent):
         }
 
     def attest_batch(self, attestations: list[dict]) -> dict:
+        """
+        Mock batch attestation — submits multiple attestations in one call.
+
+        Each attestation dict should contain 'to_did' and optionally
+        'outcome', 'weight', 'context', 'evidence_hash'.
+
+        Args:
+            attestations: List of 1-50 attestation dicts
+
+        Returns:
+            dict with 'total', 'succeeded', 'failed', and 'results'
+
+        Raises:
+            AVPValidationError: If batch is empty or exceeds 50 items
+        """
         if not attestations or len(attestations) > 50:
             from agentveil.exceptions import AVPValidationError
             raise AVPValidationError("Batch must contain 1-50 attestations", 400, "")
@@ -191,6 +274,18 @@ class AVPMockAgent(AVPAgent):
     # === Reputation (mock) ===
 
     def get_reputation(self, did: Optional[str] = None) -> dict:
+        """
+        Mock reputation query — returns locally tracked mock score.
+
+        Confidence increases with each attestation submitted.
+
+        Args:
+            did: DID of agent to query (defaults to self)
+
+        Returns:
+            dict with 'did', 'score', 'confidence', 'interpretation',
+            and 'total_attestations'
+        """
         score = self._mock_reputation
         confidence = min(0.9, 0.1 + len(self._mock_attestations) * 0.15)
         if score >= 0.8:
@@ -210,6 +305,19 @@ class AVPMockAgent(AVPAgent):
         }
 
     def get_reputation_bulk(self, dids: list[str]) -> dict:
+        """
+        Mock bulk reputation query — returns mock scores for multiple DIDs.
+
+        Args:
+            dids: List of 1-100 DIDs to query
+
+        Returns:
+            dict with 'total', 'found', and 'results' (each with 'did',
+            'found', 'reputation')
+
+        Raises:
+            AVPValidationError: If list is empty or exceeds 100 items
+        """
         if not dids or len(dids) > 100:
             from agentveil.exceptions import AVPValidationError
             raise AVPValidationError("Bulk query requires 1-100 DIDs", 400, "")
@@ -226,6 +334,19 @@ class AVPMockAgent(AVPAgent):
         }
 
     def get_reputation_tracks(self, did: Optional[str] = None) -> dict:
+        """
+        Mock reputation by track — returns per-category mock scores.
+
+        Tracks: code_quality, task_completion, data_accuracy, negotiation, general.
+        Each track is derived from the base mock reputation with small offsets.
+
+        Args:
+            did: DID of agent to query (defaults to self)
+
+        Returns:
+            dict with 'did' and 'tracks' mapping track names to
+            {'score': float, 'confidence': float}
+        """
         base = self._mock_reputation
         return {
             "did": did or self._did,
@@ -239,6 +360,18 @@ class AVPMockAgent(AVPAgent):
         }
 
     def get_reputation_velocity(self, did: Optional[str] = None) -> dict:
+        """
+        Mock reputation velocity — returns fake trend data.
+
+        Always returns "improving" trend with no alerts.
+
+        Args:
+            did: DID of agent to query (defaults to self)
+
+        Returns:
+            dict with 'did', 'current_score', 'velocity' (1d/7d/30d),
+            'trend', 'alert', and 'alert_reason'
+        """
         return {
             "did": did or self._did,
             "current_score": round(self._mock_reputation, 4),
@@ -251,6 +384,23 @@ class AVPMockAgent(AVPAgent):
     def get_reputation_credential(
         self, did: Optional[str] = None, risk_level: str = "medium"
     ) -> dict:
+        """
+        Mock signed reputation credential — returns a verifiable credential.
+
+        Produces a real Ed25519 signature over the credential payload.
+        TTL varies by risk_level: low=1h, medium=15m, high=5m.
+
+        Args:
+            did: DID of agent to credential (defaults to self)
+            risk_level: "low", "medium", or "high" (affects TTL)
+
+        Returns:
+            dict with 'did', 'score', 'confidence', 'issued_at', 'expires_at',
+            'signer_did', 'signature', 'ipfs_cid', 'risk_level'
+
+        Raises:
+            AVPValidationError: If risk_level is "critical"
+        """
         if risk_level == "critical":
             from agentveil.exceptions import AVPValidationError
             raise AVPValidationError("Critical risk: use get_reputation() instead", 400, "")
@@ -283,15 +433,51 @@ class AVPMockAgent(AVPAgent):
     # === Verification (mock) ===
 
     def verify_email(self, email: str) -> dict:
+        """
+        Mock email verification — always succeeds immediately.
+
+        Args:
+            email: Email address to verify (ignored in mock)
+
+        Returns:
+            dict with 'message' and 'expires_in'
+        """
         return {"message": "Verification email sent", "expires_in": 600}
 
     def confirm_email(self, otp: str) -> dict:
+        """
+        Mock email confirmation — always succeeds regardless of OTP.
+
+        Args:
+            otp: One-time password from verification email (ignored in mock)
+
+        Returns:
+            dict with 'verified', 'tier', and 'trust_boost'
+        """
         return {"verified": True, "tier": "email", "trust_boost": 0.3}
 
     def verify_moltbook(self, moltbook_username: str) -> dict:
+        """
+        Mock Moltbook verification — returns pending status.
+
+        Args:
+            moltbook_username: Moltbook username to verify (ignored in mock)
+
+        Returns:
+            dict with 'message' and 'status'
+        """
         return {"message": "Moltbook verification requested", "status": "pending"}
 
     def get_verification_status(self, did: Optional[str] = None) -> dict:
+        """
+        Mock verification status — always returns DID-only tier.
+
+        Args:
+            did: DID to check (defaults to self)
+
+        Returns:
+            dict with 'did', 'tier', 'trust_boost', and 'verified_at'
+        """
         return {
             "did": did or self._did,
             "tier": "did",
@@ -302,6 +488,13 @@ class AVPMockAgent(AVPAgent):
     # === Onboarding (mock) ===
 
     def get_onboarding_challenge(self) -> Optional[dict]:
+        """
+        Mock onboarding challenge — returns a fake capability description challenge.
+
+        Returns:
+            dict with 'challenge_id', 'challenge_text', 'challenge_type',
+            'target_capability', 'deadline', and 'status'
+        """
         return {
             "challenge_id": f"mock-challenge-{uuid.uuid4().hex[:8]}",
             "challenge_text": "Describe your primary capability in 2-3 sentences.",
@@ -312,6 +505,17 @@ class AVPMockAgent(AVPAgent):
         }
 
     def submit_challenge_answer(self, challenge_id: str, answer: str) -> dict:
+        """
+        Mock challenge submission — always passes with a high score.
+
+        Args:
+            challenge_id: ID of the challenge to answer
+            answer: Challenge response text (ignored in mock)
+
+        Returns:
+            dict with 'challenge_id', 'score', 'passed', 'reasoning',
+            and 'pipeline_status'
+        """
         return {
             "challenge_id": challenge_id,
             "score": 0.85,
@@ -321,6 +525,12 @@ class AVPMockAgent(AVPAgent):
         }
 
     def get_onboarding_status(self) -> dict:
+        """
+        Mock onboarding status — reflects verification state.
+
+        Returns:
+            dict with 'did', 'status', 'stages_completed', and 'stages_total'
+        """
         return {
             "did": self._did,
             "status": "completed" if self._is_verified else "pending",
@@ -331,6 +541,16 @@ class AVPMockAgent(AVPAgent):
     # === Agent Info (mock) ===
 
     def get_agent_info(self, did: Optional[str] = None) -> dict:
+        """
+        Mock agent info — returns basic agent metadata.
+
+        Args:
+            did: DID of agent to query (defaults to self)
+
+        Returns:
+            dict with 'did', 'display_name', 'registered_at',
+            'verification_tier', and 'status'
+        """
         return {
             "did": did or self._did,
             "display_name": self._name,
@@ -342,6 +562,12 @@ class AVPMockAgent(AVPAgent):
     # === Health (mock) ===
 
     def health(self) -> dict:
+        """
+        Mock health check — always returns ok.
+
+        Returns:
+            dict with 'status', 'mode', and 'version'
+        """
         return {"status": "ok", "mode": "mock", "version": "0.5.3"}
 
     def __repr__(self) -> str:
