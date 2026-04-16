@@ -2,12 +2,15 @@
 
 All notable changes to the `agentveil` SDK.
 
-## [Unreleased]
+## [0.5.7] — 2026-04-17
 
 ### Fixed
 - `_auto_handle_challenge` no longer blocks the event loop when called from an
   async context. Polling work is now offloaded to a daemon thread
   (`avp-challenge-{name}`); sync callers behave exactly as before.
+
+> Note: versions 0.5.3–0.5.6 were published to PyPI without changelog entries.
+> See git history for what changed in those releases.
 
 ## [0.5.2] — 2026-04-09
 
