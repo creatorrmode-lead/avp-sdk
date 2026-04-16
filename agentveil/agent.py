@@ -444,6 +444,67 @@ class AVPAgent:
         except Exception as e:
             log.debug(f"Auto-challenge handling skipped: {e}")
 
+    # === DID Succession (key rotation) ===
+
+    def migrate(self, new_agent: "AVPAgent") -> dict:
+        """
+        Migrate this agent's identity to a new DID (key rotation).
+
+        Both this agent (old key) and new_agent (new key) must sign the
+        migration message. Reputation transfers from old DID to new DID
+        with a small decay factor (server default 0.9x). Old DID becomes
+        status=SUCCEEDED and can no longer be used for authenticated calls.
+
+        After migration, continue using new_agent for all operations.
+
+        Args:
+            new_agent: A fresh AVPAgent (created with AVPAgent.create()),
+                       not yet registered on the server.
+
+        Returns:
+            Migration result dict with old_did, new_did, old_score, new_score,
+            decay_factor, cooldown_until, migrated_at.
+
+        Raises:
+            AVPError: If the server rejects the migration (409, 429, 403, etc.)
+        """
+        from datetime import datetime, timezone
+
+        if new_agent.did == self._did:
+            raise AVPValidationError("new_agent must have a different DID")
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        message = f"avp:migrate:v1:{self._did}:{new_agent.did}:{timestamp}".encode()
+
+        old_signing_key = SigningKey(self._private_key)
+        new_signing_key = SigningKey(new_agent._private_key)
+        signature_old = old_signing_key.sign(message).signature.hex()
+        signature_new = new_signing_key.sign(message).signature.hex()
+
+        body = {
+            "old_did": self._did,
+            "new_did": new_agent.did,
+            "reason": "key_rotation",
+            "signature_old": signature_old,
+            "signature_new": signature_new,
+            "timestamp": timestamp,
+        }
+
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = c.post("/v1/agents/migrate", json=body)
+            result = self._handle_response(r)
+
+        # Update new agent state to match successful migration
+        new_agent._is_registered = True
+        new_agent._is_verified = True
+
+        log.info(
+            f"DID migration successful: {self._did[:30]}... → "
+            f"{new_agent.did[:30]}... "
+            f"(score {result.get('old_score', 0):.3f} → {result.get('new_score', 0):.3f})"
+        )
+        return result
+
     # === Agent Cards ===
 
     def publish_card(
