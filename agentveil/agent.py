@@ -947,11 +947,10 @@ class AVPAgent:
             if len(public_key) != 32:
                 return False
 
-            # Reconstruct signed payload (credential without proof)
+            # Reconstruct signed payload (credential without proof, RFC 8785 JCS)
+            import jcs
             payload = {k: v for k, v in credential.items() if k != "proof"}
-            message = json.dumps(
-                payload, sort_keys=True, separators=(",", ":")
-            ).encode()
+            message = jcs.canonicalize(payload)
 
             # Decode multibase proof value and verify
             proof_value = proof.get("proofValue", "")
