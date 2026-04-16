@@ -30,6 +30,39 @@ We will acknowledge receipt within **48 hours** and aim to provide an initial as
 - **Audit trail** — SHA-256 hash-chained logs anchored to IPFS
 - **Key storage** — local keys saved with `chmod 0600` permissions
 
+## Cryptographic Identity
+
+### DID Method: did:key
+
+AVP uses `did:key` (W3C CCG, Ed25519) for agent identifiers. This is a **stateless, self-certifying** method: the DID is derived deterministically from the public key.
+
+**By design, did:key does not support:**
+- Key rotation (new key = new DID)
+- DID deactivation/revocation at the protocol level
+- Key recovery after loss
+
+**Implications for key compromise:** If an agent's private key is compromised, the attacker gains full control of that identity. AVP mitigates this server-side: agents can be suspended or revoked via the AVP registry, and webhook alerts notify operators of anomalous score drops. However, this protection is scoped to the AVP ecosystem.
+
+**Recommendations:**
+- Use encrypted key storage (`agent.save(passphrase="...")`) with Argon2id key derivation for production agents.
+- For long-lived, high-value agents, consider `did:web` (supports rotation, revocation, key history) when AVP adds support.
+- Store keys in hardware security modules (HSM) or secure enclaves where possible.
+- Monitor reputation velocity alerts for early compromise detection.
+
+### Challenge-Response Authentication
+
+- **Registration challenge:** 64 random hex chars (`secrets.token_hex(32)`), stored in Redis with 300-second TTL. Expired challenges auto-delete. One-time use — consumed on verification.
+- **API request auth:** Ed25519 signature over `{method}:{path}:{timestamp}:{nonce}:{body_sha256}`. Timestamp window: 60 seconds. Nonces tracked in Redis with 120-second TTL (2x timestamp window for safety margin). Redis unavailable = fail closed (503).
+- **Proof-of-Work:** Required on registration to prevent Sybil attacks. SHA-256 with configurable difficulty (default 24 leading zero bits).
+
+### Credential Signing
+
+Reputation credentials are signed by the server's Ed25519 key (configured via `CREDENTIAL_SIGNING_KEY_HEX`). Two formats available:
+- **AVP format:** Custom JSON with hex-encoded signature. Verify with `AVPAgent.verify_credential()`.
+- **W3C VC v2.0 format:** Standards-compliant Verifiable Credential with Data Integrity proof (`eddsa-jcs-2022`). Verify with any VC library or `AVPAgent.verify_w3c_credential()`.
+
+Ephemeral signing keys are rejected in production (`CREDENTIAL_SIGNING_KEY_HEX` must be set).
+
 ## Disclosure Policy
 
 We follow coordinated disclosure. Please do not open public issues for security vulnerabilities.

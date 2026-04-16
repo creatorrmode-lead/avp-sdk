@@ -788,6 +788,7 @@ class AVPAgent:
         self,
         did: Optional[str] = None,
         risk_level: str = "medium",
+        format: str = "avp",
     ) -> dict:
         """
         Get a signed reputation credential for offline verification.
@@ -799,20 +800,26 @@ class AVPAgent:
             did: Agent DID (defaults to self)
             risk_level: "low" (60min TTL), "medium" (15min), "high" (5min).
                         "critical" is rejected — use get_reputation() instead.
+            format: "avp" (default, AVP-native format) or "w3c" (W3C VC v2.0).
+                    W3C format is verifiable by any standard VC library.
 
         Returns:
-            dict with did, score, confidence, issued_at, expires_at,
-            ipfs_cid, risk_level, signature, signer_did
+            dict — AVP format or W3C Verifiable Credential depending on format param.
+            Use verify_credential() for AVP format, verify_w3c_credential() for W3C.
         """
         if risk_level not in ("low", "medium", "high", "critical"):
             raise AVPValidationError(
                 f"Invalid risk_level: {risk_level}. Must be low/medium/high/critical"
             )
+        if format not in ("avp", "w3c"):
+            raise AVPValidationError(
+                f"Invalid format: {format}. Must be avp or w3c"
+            )
         target = did or self._did
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
             r = c.get(
                 f"/v1/reputation/{target}/credential",
-                params={"risk_level": risk_level},
+                params={"risk_level": risk_level, "format": format},
             )
             return self._handle_response(r)
 
@@ -871,6 +878,86 @@ class AVPAgent:
 
             # Verify Ed25519 signature
             signature = bytes.fromhex(credential["signature"])
+            verify_key = VerifyKey(public_key)
+            verify_key.verify(message, signature)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def verify_w3c_credential(credential: dict) -> bool:
+        """
+        Verify a W3C VC v2.0 reputation credential offline — no API call needed.
+
+        Checks:
+        1. W3C VC structure (@context, type, proof)
+        2. Temporal validity (validFrom/validUntil)
+        3. Data Integrity proof (eddsa-jcs-2022): Ed25519 signature over
+           JCS-canonicalized credential (proof removed)
+
+        Args:
+            credential: The W3C VC dict from get_reputation_credential(format="w3c")
+
+        Returns:
+            True if the credential is valid, not expired, and signature checks out
+        """
+        import base58
+        from datetime import datetime, timezone, timedelta
+
+        try:
+            # Structure checks
+            contexts = credential.get("@context", [])
+            if "https://www.w3.org/ns/credentials/v2" not in contexts:
+                return False
+            types = credential.get("type", [])
+            if "VerifiableCredential" not in types:
+                return False
+            proof = credential.get("proof")
+            if not proof or proof.get("type") != "DataIntegrityProof":
+                return False
+            if proof.get("cryptosuite") != "eddsa-jcs-2022":
+                return False
+
+            # Temporal validity
+            now = datetime.now(timezone.utc)
+            valid_until = credential.get("validUntil")
+            if valid_until:
+                expires = datetime.strptime(
+                    valid_until, "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+                if now > expires:
+                    return False
+            valid_from = credential.get("validFrom")
+            if valid_from:
+                starts = datetime.strptime(
+                    valid_from, "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+                if now < starts - timedelta(seconds=60):
+                    return False
+
+            # Extract public key from verification method DID
+            vm = proof.get("verificationMethod", "")
+            signer_did = vm.split("#")[0]
+            if not signer_did.startswith("did:key:z"):
+                return False
+            decoded = base58.b58decode(signer_did[9:])
+            if len(decoded) < 2 or decoded[0] != 0xED or decoded[1] != 0x01:
+                return False
+            public_key = decoded[2:]
+            if len(public_key) != 32:
+                return False
+
+            # Reconstruct signed payload (credential without proof)
+            payload = {k: v for k, v in credential.items() if k != "proof"}
+            message = json.dumps(
+                payload, sort_keys=True, separators=(",", ":")
+            ).encode()
+
+            # Decode multibase proof value and verify
+            proof_value = proof.get("proofValue", "")
+            if not proof_value.startswith("z"):
+                return False
+            signature = base58.b58decode(proof_value[1:])
             verify_key = VerifyKey(public_key)
             verify_key.verify(message, signature)
             return True
