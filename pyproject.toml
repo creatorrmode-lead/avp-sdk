@@ -47,6 +47,10 @@ agentveil-mcp = "agentveil_mcp.server:main"
 [tool.setuptools.packages.find]
 include = ["agentveil*", "agentveil_mcp*", "mcp_server*"]
 
+[tool.setuptools.package-data]
+agentveil_mcp = ["README.md"]
+mcp_server = ["README.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
