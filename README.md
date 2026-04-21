@@ -114,8 +114,8 @@ assert AVPAgent.verify_w3c_credential(cred)  # offline, no API call
 | **LangGraph** | `pip install agentveil langgraph` | `ToolNode([avp_check_reputation, avp_should_delegate])` |
 | **AutoGen** | `pip install agentveil autogen-core` | `tools=avp_reputation_tools()` |
 | **OpenAI** | `pip install agentveil openai` | `tools=avp_tool_definitions()` |
-| **Claude** | `pip install agentveil mcp` | MCP server with 12 tools |
-| **Hermes** | `pip install agentveil mcp` | MCP + agentskills.io skill |
+| **Claude** | `pip install 'agentveil[mcp]'` | `agentveil-mcp` — MCP server, [docs](agentveil_mcp/README.md) |
+| **Hermes** | `pip install 'agentveil[mcp]'` | `agentveil-mcp` + agentskills.io skill |
 | **Paperclip** | `pip install agentveil` | `avp_should_delegate()` + `avp_evaluate_team()` |
 | **AWS Bedrock** | `pip install agentveil boto3` | Converse API with AVP trust tools |
 | **AgentMesh (MS AGT)** | `pip install agentmesh-avp` | `TrustEngine(external_providers=[AVPProvider()])` |

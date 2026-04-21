@@ -1,4 +1,4 @@
-"""Allow running as: python -m mcp_server"""
-from mcp_server.server import main
+"""DEPRECATED: `python -m mcp_server` forwards to `agentveil_mcp`."""
+from agentveil_mcp.server import main
 
 main()
