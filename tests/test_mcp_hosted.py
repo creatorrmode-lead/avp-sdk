@@ -210,3 +210,48 @@ def test_http_mode_with_empty_token_exits_nonzero(monkeypatch):
     finally:
         sys.modules.pop("agentveil_mcp.server", None)
         sys.modules.pop("agentveil_mcp", None)
+
+
+# ------------------------------------------------------------------
+# Transport security / allowed hosts (DNS-rebind protection)
+# ------------------------------------------------------------------
+
+@requires_mcp
+def test_transport_security_defaults_to_localhost_only():
+    """Unset AVP_MCP_ALLOWED_HOSTS → FastMCP's localhost-only default stays."""
+    s = _reload_server_with_env({"AVP_MCP_ALLOWED_HOSTS": None, "AVP_MCP_ALLOWED_ORIGINS": None})
+    try:
+        ts = s.mcp.settings.transport_security
+        assert ts.enable_dns_rebinding_protection is True
+        # When we pass nothing, FastMCP fills its own localhost default.
+        # The allowed_hosts list should NOT contain our public-domain marker.
+        assert not any("agentveil.dev" in h for h in (ts.allowed_hosts or []))
+    finally:
+        sys.modules.pop("agentveil_mcp.server", None)
+        sys.modules.pop("agentveil_mcp", None)
+
+
+@requires_mcp
+def test_transport_security_adds_public_host_when_env_set():
+    """AVP_MCP_ALLOWED_HOSTS adds the listed hostnames without removing localhost."""
+    s = _reload_server_with_env({
+        "AVP_MCP_ALLOWED_HOSTS": "agentveil.dev,mcp.example.test",
+        "AVP_MCP_ALLOWED_ORIGINS": "https://agentveil.dev",
+    })
+    try:
+        ts = s.mcp.settings.transport_security
+        assert ts.enable_dns_rebinding_protection is True
+        hosts = ts.allowed_hosts or []
+        origins = ts.allowed_origins or []
+        # Configured hosts present
+        assert "agentveil.dev" in hosts
+        assert "mcp.example.test" in hosts
+        # Localhost entries kept alongside (healthcheck + local dev must still work)
+        assert any("127.0.0.1" in h for h in hosts)
+        assert any("localhost" in h for h in hosts)
+        # Origins
+        assert "https://agentveil.dev" in origins
+        assert any("localhost" in o for o in origins)
+    finally:
+        sys.modules.pop("agentveil_mcp.server", None)
+        sys.modules.pop("agentveil_mcp", None)

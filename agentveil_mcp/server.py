@@ -9,9 +9,14 @@ Usage:
     python -m agentveil_mcp       # equivalent to stdio transport
 
 Hosted mode env vars (HTTP transport only):
-    AVP_MCP_READONLY=1            # skip write-tool registration
-    AVP_MCP_TOKEN=<secret>        # required for --http; requests without
-                                  # Authorization: Bearer <token> return 401
+    AVP_MCP_READONLY=1               # skip write-tool registration
+    AVP_MCP_TOKEN=<secret>           # required for --http; requests without
+                                     # Authorization: Bearer <token> return 401
+    AVP_MCP_ALLOWED_HOSTS=host1,...  # comma-separated public hostnames to
+                                     # accept on Host: header (reverse proxy).
+                                     # If unset, only localhost is allowed
+                                     # (FastMCP's DNS-rebinding protection default).
+    AVP_MCP_ALLOWED_ORIGINS=url1,... # comma-separated origins for Origin: header.
 """
 
 import json
@@ -20,6 +25,7 @@ import logging
 from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
 from agentveil import AVPAgent, AVPError, AVPAuthError, AVPNotFoundError, AVPRateLimitError
@@ -42,6 +48,42 @@ def _is_readonly() -> bool:
 
 IS_READONLY = _is_readonly()
 
+
+def _build_transport_security() -> TransportSecuritySettings:
+    """Build TransportSecuritySettings honoring AVP_MCP_ALLOWED_HOSTS / _ALLOWED_ORIGINS.
+
+    FastMCP's default DNS-rebinding protection allows only localhost hostnames
+    (127.0.0.1, localhost, [::1]). A hosted deployment behind a reverse proxy
+    receives `Host: <public-domain>` and would get HTTP 421 "Invalid Host
+    header" unless the public domain is explicitly allowed.
+
+    Env vars (comma-separated, optional):
+      AVP_MCP_ALLOWED_HOSTS    — hostnames accepted on the Host: header
+      AVP_MCP_ALLOWED_ORIGINS  — origins accepted on the Origin: header
+
+    When unset, falls back to FastMCP's localhost-only defaults — the
+    protection stays on; no accidental relaxation.
+    When set, localhost entries are kept in the allowlist alongside the
+    configured values so local testing and the docker healthcheck still work.
+    """
+    hosts_env = os.environ.get("AVP_MCP_ALLOWED_HOSTS", "").strip()
+    origins_env = os.environ.get("AVP_MCP_ALLOWED_ORIGINS", "").strip()
+
+    hosts = [h.strip() for h in hosts_env.split(",") if h.strip()]
+    origins = [o.strip() for o in origins_env.split(",") if o.strip()]
+
+    if not (hosts or origins):
+        return TransportSecuritySettings()
+
+    localhost_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    localhost_origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts + localhost_hosts,
+        allowed_origins=origins + localhost_origins,
+    )
+
+
 mcp = FastMCP(
     "Agent Veil Protocol",
     instructions=(
@@ -53,6 +95,7 @@ mcp = FastMCP(
         "Start with 'check_reputation' or 'check_trust' to evaluate an agent, "
         "then use 'submit_attestation' to record interaction outcomes."
     ),
+    transport_security=_build_transport_security(),
 )
 
 # Cache the agent instance after first use
