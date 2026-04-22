@@ -458,7 +458,11 @@ class AVPMockAgent(AVPAgent):
 
     def verify_moltbook(self, moltbook_username: str) -> dict:
         """
-        Mock Moltbook verification — returns pending status.
+        DEPRECATED — Moltbook is a legacy / compatibility surface.
+
+        Mirrors :meth:`AVPAgent.verify_moltbook`: the call still succeeds,
+        but a real Moltbook verification grants NONE-equivalent trust
+        (0.1x). Use ``verify_email`` or GitHub verification instead.
 
         Args:
             moltbook_username: Moltbook username to verify (ignored in mock)
@@ -466,6 +470,14 @@ class AVPMockAgent(AVPAgent):
         Returns:
             dict with 'message' and 'status'
         """
+        import warnings
+
+        warnings.warn(
+            "AVPMockAgent.verify_moltbook is deprecated: Moltbook is a legacy "
+            "compatibility surface and grants NONE-equivalent trust (0.1x).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return {"message": "Moltbook verification requested", "status": "pending"}
 
     def get_verification_status(self, did: Optional[str] = None) -> dict:

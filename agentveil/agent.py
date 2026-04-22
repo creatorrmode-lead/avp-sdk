@@ -1067,7 +1067,14 @@ class AVPAgent:
 
     def verify_moltbook(self, moltbook_username: str) -> dict:
         """
-        Request Moltbook verification. Bot will check your profile and upgrade tier.
+        DEPRECATED — Moltbook is a legacy / compatibility surface, not an
+        active trust tier.
+
+        The call still succeeds and the bot still processes the request,
+        but a successful verification grants NONE-equivalent trust
+        (0.1x multiplier), identical to an unverified agent. For active
+        verification, use ``verify_email`` or start GitHub OAuth via the
+        AVP API (``POST /v1/verify/github``).
 
         Args:
             moltbook_username: Your Moltbook username
@@ -1075,6 +1082,15 @@ class AVPAgent:
         Returns:
             dict with message and status
         """
+        import warnings
+
+        warnings.warn(
+            "AVPAgent.verify_moltbook is deprecated: Moltbook is a legacy "
+            "compatibility surface and grants NONE-equivalent trust (0.1x). "
+            "Use verify_email or GitHub verification instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         body = json.dumps({"moltbook_username": moltbook_username}).encode()
         headers = self._auth_headers("POST", "/v1/verify/moltbook", body)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
