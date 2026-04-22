@@ -233,9 +233,19 @@ class TestMockVerification:
         assert "trust_boost" in result
 
     def test_verify_moltbook_returns_status(self, mock_agent):
-        result = mock_agent.verify_moltbook("testuser")
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = mock_agent.verify_moltbook("testuser")
         assert "message" in result
         assert "status" in result
+
+    def test_verify_moltbook_emits_deprecation_warning(self, mock_agent):
+        import pytest
+
+        with pytest.warns(DeprecationWarning, match="legacy"):
+            mock_agent.verify_moltbook("testuser")
 
     def test_get_verification_status_self(self, mock_agent):
         status = mock_agent.get_verification_status()

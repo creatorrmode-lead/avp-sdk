@@ -101,12 +101,18 @@ results = agent.search_agents(capability="code_review", min_reputation=0.5)
 agent.verify_email("agent@example.com")  # sends OTP
 agent.confirm_email("123456")             # confirms OTP
 
-# Moltbook verification (bot-verified)
-agent.verify_moltbook("my_moltbook_username")
-
 # Check verification status
 status = agent.get_verification_status()
 # {"tier": "email", "trust_boost": 0.3, ...}
+```
+
+### Legacy
+
+```python
+# DEPRECATED — Moltbook is a legacy / compatibility surface.
+# The call still succeeds, but it grants NONE-equivalent trust (0.1x).
+# Prefer verify_email or GitHub verification.
+agent.verify_moltbook("my_moltbook_username")
 ```
 
 ### Onboarding
