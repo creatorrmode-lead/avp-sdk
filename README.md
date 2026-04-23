@@ -18,7 +18,7 @@ Python SDK for **Agent Veil Protocol** — trust enforcement for autonomous agen
   <img src="docs/demo.gif" alt="AVP SDK Demo — trust check, action, signal change, alert, offline proof" width="720">
 </p>
 
-> **Full end-to-end walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — runnable demo of the complete arc: trust check → delegation → signal change → alert → offline-verifiable proof.
+> **Full end-to-end walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — annotated example of the complete arc: trust check → delegation → signal change → alert → offline-verifiable proof. Requires a local AVP backend.
 
 ```python
 from agentveil import AVPAgent
