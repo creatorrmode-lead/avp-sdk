@@ -14,6 +14,8 @@ Python SDK for **Agent Veil Protocol** — trust enforcement for autonomous agen
 
 > **[Integrated with Microsoft Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit/pull/1010)** — AVPProvider merged as official TrustProvider integration.
 
+> **Paper:** Boiko, O. (2026). *[Why AI Agent Reputation Needs Both Link Analysis and Flow-Based Gating](https://doi.org/10.5281/zenodo.19730525)*. Zenodo. DOI: [10.5281/zenodo.19730525](https://doi.org/10.5281/zenodo.19730525)
+
 <p align="center">
   <img src="docs/demo.gif" alt="AVP SDK Demo — trust check, action, signal change, alert, offline proof" width="720">
 </p>
