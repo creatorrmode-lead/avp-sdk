@@ -1,0 +1,47 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "@protected": true,
+
+    "AgentDelegation": {
+      "@id": "https://agentveil.dev/contexts/delegation/v1#AgentDelegation",
+      "@context": {
+        "@version": 1.1,
+        "@protected": true,
+
+        "scope": {
+          "@id": "https://agentveil.dev/contexts/delegation/v1#scope",
+          "@container": "@set"
+        },
+        "purpose": "https://agentveil.dev/contexts/delegation/v1#purpose"
+      }
+    },
+
+    "predicate": "https://agentveil.dev/contexts/delegation/v1#predicate",
+
+    "max_spend": {
+      "@id": "https://agentveil.dev/contexts/delegation/v1#max_spend",
+      "@context": {
+        "currency": "https://agentveil.dev/contexts/delegation/v1#currency",
+        "amount": {
+          "@id": "https://agentveil.dev/contexts/delegation/v1#amount",
+          "@type": "http://www.w3.org/2001/XMLSchema#decimal"
+        }
+      }
+    },
+
+    "allowed_category": {
+      "@id": "https://agentveil.dev/contexts/delegation/v1#allowed_category",
+      "@context": {
+        "value": "https://agentveil.dev/contexts/delegation/v1#category_value"
+      }
+    },
+
+    "currency": "https://agentveil.dev/contexts/delegation/v1#currency",
+    "amount": {
+      "@id": "https://agentveil.dev/contexts/delegation/v1#amount",
+      "@type": "http://www.w3.org/2001/XMLSchema#decimal"
+    },
+    "value": "https://agentveil.dev/contexts/delegation/v1#category_value"
+  }
+}

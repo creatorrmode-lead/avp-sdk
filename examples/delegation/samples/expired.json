@@ -1,0 +1,35 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://agentveil.dev/contexts/delegation/v1.jsonld"
+  ],
+  "credentialSubject": {
+    "id": "did:key:z6Mkha2Epo5LtXSbfqe4pr6isB3r8Hx86QfMwfiAfUbf8db5",
+    "purpose": "Procure office supplies for Q2 onboarding kits",
+    "scope": [
+      {
+        "amount": 100,
+        "currency": "USD",
+        "predicate": "max_spend"
+      },
+      {
+        "predicate": "allowed_category",
+        "value": "office_supplies"
+      }
+    ]
+  },
+  "id": "urn:uuid:22222222-2222-4222-8222-222222222222",
+  "issuer": "did:key:z6MkiYbwC5honA2sxE7XLAyJMDFibLvVg8FgodBX4A4CaUgr",
+  "proof": {
+    "cryptosuite": "eddsa-jcs-2022",
+    "proofValue": "z5wEF3HACWJBj2cci3Y6X5kLR5nnWHrUfd8piyTiQ92UchPvQtRBYLtTjAJhnREYe3nPEC9H2JBPJXeWTuGsFb2HK",
+    "type": "DataIntegrityProof",
+    "verificationMethod": "did:key:z6MkiYbwC5honA2sxE7XLAyJMDFibLvVg8FgodBX4A4CaUgr#z6MkiYbwC5honA2sxE7XLAyJMDFibLvVg8FgodBX4A4CaUgr"
+  },
+  "type": [
+    "VerifiableCredential",
+    "AgentDelegation"
+  ],
+  "validFrom": "2026-01-01T00:00:00Z",
+  "validUntil": "2026-01-02T00:00:00Z"
+}
