@@ -2,6 +2,37 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.6.2] — 2026-04-27
+
+### Added — DelegationReceipt primitive
+- New `agentveil.delegation` module shipping a minimal AVP runtime-
+  control primitive: a W3C Verifiable Credential v2.0 receipt that
+  records who authorized which agent to act, within what scope, and
+  for how long.
+- `issue_delegation()` signs a receipt with the principal's Ed25519
+  `did:key`. Scope predicates supported in v1: `max_spend`
+  (ISO 4217 currency + amount) and `allowed_category` (string value).
+  Validity is bounded by `validFrom` / `validUntil`. Receipts are
+  canonicalized with RFC 8785 JCS before signing.
+- `verify_delegation()` performs offline verification: structure
+  checks, expiration window, scope-predicate validation,
+  `eddsa-jcs-2022` Data Integrity Proof. No network calls, no
+  AVP backend dependency.
+- Standalone reference verifier (~180 lines, only `pynacl` /
+  `base58` / `jcs` dependencies, no `agentveil` SDK import) at
+  `examples/delegation/verify.py` — auditors can read and run it
+  without trusting the SDK.
+- JSON-LD context pinned at `https://agentveil.dev/contexts/delegation/v1.jsonld`.
+
+### Schema stability
+- `DelegationReceipt` v1 wire format is intended to be stable. Future
+  extensions add new optional predicates rather than alter existing
+  ones — anything else would invalidate already-signed receipts.
+
+### Not changed
+- All existing reputation, attestation, registration, MCP, and
+  webhook-alert surfaces are untouched.
+
 ## [0.6.1] — 2026-04-23
 
 ### Added (B3 — negative attestation DX)
