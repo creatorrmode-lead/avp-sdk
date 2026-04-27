@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/agentveil)](https://pypi.org/project/agentveil/)
 [![Python](https://img.shields.io/pypi/pyversions/agentveil)](https://pypi.org/project/agentveil/)
-[![Tests](https://github.com/creatorrmode-lead/avp-sdk/actions/workflows/tests.yml/badge.svg)](https://github.com/creatorrmode-lead/avp-sdk/actions)
+[![Tests](https://github.com/agentveil-protocol/avp-sdk/actions/workflows/tests.yml/badge.svg)](https://github.com/agentveil-protocol/avp-sdk/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [Listed on Glama MCP Directory](https://glama.ai/mcp/servers/creatorrmode-lead/avp-sdk)
 

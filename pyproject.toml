@@ -28,10 +28,10 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://agentveil.dev"
-Documentation = "https://github.com/creatorrmode-lead/avp-sdk#readme"
-Repository = "https://github.com/creatorrmode-lead/avp-sdk"
-Changelog = "https://github.com/creatorrmode-lead/avp-sdk/releases"
-Issues = "https://github.com/creatorrmode-lead/avp-sdk/issues"
+Documentation = "https://github.com/agentveil-protocol/avp-sdk#readme"
+Repository = "https://github.com/agentveil-protocol/avp-sdk"
+Changelog = "https://github.com/agentveil-protocol/avp-sdk/releases"
+Issues = "https://github.com/agentveil-protocol/avp-sdk/issues"
 
 [build-system]
 requires = ["setuptools>=68.0"]

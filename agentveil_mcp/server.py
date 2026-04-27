@@ -590,7 +590,7 @@ def protocol_info() -> str:
         "api": f"{BASE_URL}/docs",
         "explorer": f"{BASE_URL}/#explorer",
         "sdk": "pip install agentveil",
-        "github": "https://github.com/creatorrmode-lead/avp-sdk",
+        "github": "https://github.com/agentveil-protocol/avp-sdk",
         "features": [
             "W3C DID Identity (Ed25519)",
             "Peer Reputation (attestation-based scoring)",
