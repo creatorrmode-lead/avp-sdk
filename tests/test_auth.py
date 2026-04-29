@@ -6,7 +6,7 @@ import time
 
 from nacl.signing import SigningKey, VerifyKey
 
-from agentveil.auth import build_auth_header
+from agentveil.auth import build_auth_header, canonicalize_query_params
 from agentveil.agent import _public_key_to_did
 
 
@@ -44,6 +44,70 @@ class TestBuildAuthHeader:
         verify_key = VerifyKey(public_key)
         signature = bytes.fromhex(sig_hex)
         verify_key.verify(message.encode(), signature)  # raises if invalid
+
+    def test_v2_signature_binds_canonical_query(self, private_key, did, public_key):
+        body = b""
+        params = {
+            "role": "party",
+            "status": "OPEN",
+            "limit": 10,
+            "offset": 0,
+        }
+        headers = build_auth_header(
+            private_key,
+            did,
+            "GET",
+            "/v1/remediation/cases",
+            body,
+            params=params,
+        )
+        auth = headers["Authorization"]
+        assert 'v="2"' in auth
+
+        ts = re.search(r'ts="(\d+)"', auth).group(1)
+        nonce = re.search(r'nonce="([^"]+)"', auth).group(1)
+        sig_hex = re.search(r'sig="([^"]+)"', auth).group(1)
+
+        body_hash = hashlib.sha256(body).hexdigest()
+        query = canonicalize_query_params(params)
+        message = f"v2:GET:/v1/remediation/cases:{query}:{ts}:{nonce}:{body_hash}"
+
+        verify_key = VerifyKey(public_key)
+        signature = bytes.fromhex(sig_hex)
+        verify_key.verify(message.encode(), signature)
+
+    def test_v2_signature_applies_to_any_method_with_query(self, private_key, did, public_key):
+        body = b'{"approved":true}'
+        params = {"force": "true"}
+        headers = build_auth_header(
+            private_key,
+            did,
+            "POST",
+            "/v1/remediation/cases/123/resolve",
+            body,
+            params=params,
+        )
+        auth = headers["Authorization"]
+        assert 'v="2"' in auth
+
+        ts = re.search(r'ts="(\d+)"', auth).group(1)
+        nonce = re.search(r'nonce="([^"]+)"', auth).group(1)
+        sig_hex = re.search(r'sig="([^"]+)"', auth).group(1)
+
+        body_hash = hashlib.sha256(body).hexdigest()
+        query = canonicalize_query_params(params)
+        message = f"v2:POST:/v1/remediation/cases/123/resolve:{query}:{ts}:{nonce}:{body_hash}"
+
+        verify_key = VerifyKey(public_key)
+        signature = bytes.fromhex(sig_hex)
+        verify_key.verify(message.encode(), signature)
+
+    def test_v2_canonical_query_is_stable(self):
+        params = {"b": "hello world", "a": ["2", "1"], "empty": ""}
+        assert canonicalize_query_params(params) == "a=1&a=2&b=hello%20world&empty="
+
+    def test_v2_canonical_query_encodes_spaces_as_percent_20(self):
+        assert canonicalize_query_params({"reason": "foo bar"}) == "reason=foo%20bar"
 
     def test_timestamp_is_current(self, private_key, did):
         before = int(time.time())

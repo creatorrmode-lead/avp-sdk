@@ -281,9 +281,22 @@ class AVPAgent:
 
     # === HTTP helpers ===
 
-    def _auth_headers(self, method: str, path: str, body: bytes = b"") -> dict:
+    def _auth_headers(
+        self,
+        method: str,
+        path: str,
+        body: bytes = b"",
+        params: Optional[dict] = None,
+    ) -> dict:
         """Build authenticated headers for a request."""
-        return build_auth_header(self._private_key, self._did, method, path, body)
+        return build_auth_header(
+            self._private_key,
+            self._did,
+            method,
+            path,
+            body,
+            params=params,
+        )
 
     def _handle_response(self, response: httpx.Response) -> dict:
         """Parse response and raise appropriate exceptions."""
@@ -340,30 +353,40 @@ class AVPAgent:
         self._handle_response(response)
         raise AVPServerError("unreachable response handling state")
 
-    def _post_json(self, path: str, body_data: dict) -> dict:
+    def _post_json(
+        self,
+        path: str,
+        body_data: dict,
+        params: Optional[dict] = None,
+    ) -> dict:
         body = json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", path, body)
+        headers = self._auth_headers("POST", path, body, params=params)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post(path, content=body, headers=headers)
+            r = c.post(path, content=body, params=params, headers=headers)
             return self._handle_response(r)
 
-    def _post_raw_json(self, path: str, body_data: Optional[dict] = None) -> str:
+    def _post_raw_json(
+        self,
+        path: str,
+        body_data: Optional[dict] = None,
+        params: Optional[dict] = None,
+    ) -> str:
         body = b"" if body_data is None else json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", path, body)
+        headers = self._auth_headers("POST", path, body, params=params)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post(path, content=body, headers=headers)
+            r = c.post(path, content=body, params=params, headers=headers)
             return self._handle_raw_json_response(r)
 
     def _get_json(self, path: str, params: Optional[dict] = None) -> dict:
-        headers = self._auth_headers("GET", path)
+        headers = self._auth_headers("GET", path, params=params)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
             r = c.get(path, params=params, headers=headers)
             return self._handle_response(r)
 
-    def _get_raw_json(self, path: str) -> str:
-        headers = self._auth_headers("GET", path)
+    def _get_raw_json(self, path: str, params: Optional[dict] = None) -> str:
+        headers = self._auth_headers("GET", path, params=params)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get(path, headers=headers)
+            r = c.get(path, params=params, headers=headers)
             return self._handle_raw_json_response(r)
 
     def integration_preflight(self) -> IntegrationPreflightReport:

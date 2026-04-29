@@ -377,7 +377,35 @@ class TestRuntimeControlContract:
             "case_type": "execution_outcome_dispute",
         }
         assert "Authorization" in captured["headers"]
+        assert 'v="2"' in captured["headers"]["Authorization"]
         assert result["count"] == 0
+
+    def test_signed_post_helper_uses_v2_with_query_params(self):
+        agent = _make_agent()
+        captured = {}
+
+        def mock_post(url, **kwargs):
+            captured["url"] = url
+            captured["params"] = kwargs.get("params")
+            captured["headers"] = kwargs.get("headers")
+            captured["body"] = json.loads(kwargs.get("content", b"{}"))
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = {"ok": True}
+            return resp
+
+        with patch.object(httpx.Client, "post", side_effect=mock_post):
+            result = agent._post_json(
+                "/v1/example",
+                {"approved": True},
+                params={"force": "true"},
+            )
+
+        assert captured["url"] == "/v1/example"
+        assert captured["params"] == {"force": "true"}
+        assert captured["body"] == {"approved": True}
+        assert 'v="2"' in captured["headers"]["Authorization"]
+        assert result["ok"] is True
 
     def test_create_remediation_case_rejects_unknown_reference_field(self):
         agent = _make_agent()

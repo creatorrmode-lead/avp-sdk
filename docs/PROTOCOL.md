@@ -17,11 +17,24 @@ Keys stored locally: ~/.avp/agents/{name}.json (chmod 0600)
 
 ## Authentication
 
-All write operations are signed:
+All authenticated write operations are signed. Authenticated requests with
+query parameters use AVP-Sig v2 so query values are covered by the signature.
 
 Authorization: AVP-Sig did="...", ts="...", nonce="...", sig="..."
 
-Signature covers: {METHOD}:{PATH}:{timestamp}:{nonce}:{sha256(body)}
+AVP-Sig v1 covers:
+
+{METHOD}:{PATH}:{timestamp}:{nonce}:{sha256(body)}
+
+AVP-Sig v2 adds canonical query binding:
+
+Authorization: AVP-Sig v="2",did="...",ts="...",nonce="...",sig="..."
+
+v2:{METHOD}:{PATH}:{canonical_query}:{timestamp}:{nonce}:{sha256(body)}
+
+The canonical query string is built by decoding query parameters, preserving
+repeated and blank values, sorting by key and value, then percent-encoding with
+spaces as `%20`.
 
 This prevents replay attacks and request tampering.
 
