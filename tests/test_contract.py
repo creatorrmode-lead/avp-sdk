@@ -340,10 +340,10 @@ class TestRuntimeControlContract:
 
         rules = {"rules": []}
         with patch.object(httpx.Client, "post", side_effect=mock_post):
-            result = agent.create_governance_policy("buyer-default", rules)
+            result = agent.create_governance_policy("customer-default", rules)
 
         assert captured["url"] == "/v1/governance/policies"
-        assert captured["body"] == {"name": "buyer-default", "rules_jsonb": rules}
+        assert captured["body"] == {"name": "customer-default", "rules_jsonb": rules}
         assert result["status"] == "DRAFT"
 
     def test_list_remediation_cases_uses_signed_get_with_filters(self):

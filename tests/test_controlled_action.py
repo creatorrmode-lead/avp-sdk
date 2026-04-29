@@ -1,4 +1,4 @@
-"""Tests for buyer-facing controlled action orchestration."""
+"""Tests for high-level controlled action orchestration."""
 
 from unittest.mock import patch
 

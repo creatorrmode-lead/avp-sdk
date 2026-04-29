@@ -1,4 +1,4 @@
-# Buyer Integration Guide
+# Customer Integration Guide
 
 This guide is for integrating AVP into a real controlled-action workflow. It is not a demo path and does not bypass runtime safety.
 
@@ -36,7 +36,7 @@ If execution or human approval signing keys are missing, the backend fails close
 ```python
 from agentveil import AVPAgent, ControlledActionOutcome
 
-agent = AVPAgent.load("https://agentveil.dev", name="buyer-agent", passphrase="...")
+agent = AVPAgent.load("https://agentveil.dev", name="customer-agent", passphrase="...")
 
 result: ControlledActionOutcome = agent.controlled_action(
     action="infra.resource.inspect",

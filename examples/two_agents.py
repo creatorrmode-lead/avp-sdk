@@ -23,8 +23,8 @@ AVP_URL = "http://localhost:8000"
 def main():
     # === Setup: Register both agents ===
     print("=== Registering agents ===")
-    agent_a = AVPAgent.create(AVP_URL, name="agent_a_buyer")
-    agent_a.register(display_name="Supply Chain Buyer")
+    agent_a = AVPAgent.create(AVP_URL, name="customer_agent")
+    agent_a.register(display_name="Supply Chain Customer")
     agent_a.publish_card(capabilities=["procurement", "supply_chain"], provider="anthropic")
 
     agent_b = AVPAgent.create(AVP_URL, name="agent_b_router")

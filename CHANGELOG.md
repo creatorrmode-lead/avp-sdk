@@ -2,19 +2,25 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.7.1] — 2026-04-29
+
+### Changed
+- Reworded public controlled-action documentation and release notes to use
+  clear customer-facing integration language.
+
 ## [0.7.0] — 2026-04-29
 
-### Added — Buyer controlled-action integration
+### Added — Controlled-action integration
 - Runtime Control wrappers for `runtime_evaluate()`,
   `get_runtime_decision()`, `execute()`, and `get_execution_receipt()`.
 - Human Approval wrappers for `create_approval()`, `get_approval()`,
   `approve()`, and `deny()`.
 - Governance and Remediation wrappers for policy/risk-event/case flows.
-- Buyer-friendly `controlled_action()` orchestration and
+- High-level `controlled_action()` orchestration and
   `execute_after_approval()` resume path.
 - Typed `ControlledActionOutcome` result object with attribute access,
   light dict-style compatibility, and `to_dict()`.
-- `docs/BUYER_INTEGRATION.md` covering secrets, first controlled action,
+- `docs/CUSTOMER_INTEGRATION.md` covering secrets, first controlled action,
   approval resume, error map, and compliance packet.
 
 ### Changed

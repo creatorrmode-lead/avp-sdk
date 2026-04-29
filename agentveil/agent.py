@@ -1168,7 +1168,7 @@ class AVPAgent:
         approval_expires_in_seconds: int = 3600,
     ) -> ControlledActionOutcome:
         """
-        Run the buyer-friendly controlled-action flow without bypassing AVP.
+        Run the high-level controlled-action flow without bypassing AVP.
 
         Returns a ControlledActionOutcome with status:
           - executed

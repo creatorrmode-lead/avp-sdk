@@ -159,7 +159,7 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 | Doc | Description |
 |-----|-------------|
 | [API Reference](docs/API.md) | Full SDK method reference with examples |
-| [Buyer Integration](docs/BUYER_INTEGRATION.md) | Controlled-action flow, secrets, errors, and compliance evidence |
+| [Customer Integration](docs/CUSTOMER_INTEGRATION.md) | Controlled-action flow, secrets, errors, and compliance evidence |
 | [Integrations](docs/INTEGRATIONS.md) | Framework-specific setup guides |
 | [Webhook Alerts](docs/WEBHOOKS.md) | Push notification setup |
 | [Protocol Spec](docs/PROTOCOL.md) | Wire format and authentication |
