@@ -2,6 +2,33 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.7.2] — 2026-04-29
+
+### Added
+- `AVPAgent.integration_preflight()` for safe customer integration checks before
+  the first controlled action. The helper verifies local identity loading,
+  API reachability, public agent registration/verification state, and a signed
+  read path without mutating backend state.
+- Typed `IntegrationPreflightReport` with customer-clear statuses such as
+  `ready`, `unregistered`, `signature_invalid`, `unverified_or_forbidden`,
+  `agent_suspended`, `rate_limited`, and `backend_or_config_unavailable`.
+
+### Changed
+- Signed SDK requests with non-empty query parameters now emit AVP-Sig v2,
+  binding a canonicalized query string into the Ed25519 signature.
+- Signed requests without query parameters remain AVP-Sig v1 during the
+  backend compatibility window.
+
+### Validation
+- Production backend v2 acceptance was deployed before this SDK release
+  candidate.
+- Production smoke against `https://agentveil.dev` passed with
+  `integration_preflight()` ready and signed v2 remediation case discovery.
+
+### Known limitations
+- AVP-Sig v1 query-bearing requests remain accepted by the backend during the
+  migration window and are warning-logged until a future sunset.
+
 ## [0.7.1] — 2026-04-29
 
 ### Changed
