@@ -2,6 +2,41 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.7.0] — 2026-04-29
+
+### Added — Buyer controlled-action integration
+- Runtime Control wrappers for `runtime_evaluate()`,
+  `get_runtime_decision()`, `execute()`, and `get_execution_receipt()`.
+- Human Approval wrappers for `create_approval()`, `get_approval()`,
+  `approve()`, and `deny()`.
+- Governance and Remediation wrappers for policy/risk-event/case flows.
+- Buyer-friendly `controlled_action()` orchestration and
+  `execute_after_approval()` resume path.
+- Typed `ControlledActionOutcome` result object with attribute access,
+  light dict-style compatibility, and `to_dict()`.
+- `docs/BUYER_INTEGRATION.md` covering secrets, first controlled action,
+  approval resume, error map, and compliance packet.
+
+### Changed
+- HTTP response handling now accepts both `200` and `201` success
+  responses.
+- Signed execution and approval receipt endpoints preserve exact raw JSON
+  text for offline proof instead of parsing and re-serializing.
+- `429` handling now parses `Retry-After` defensively.
+
+### Validation
+- Production API smoke passed against `https://agentveil.dev` on
+  2026-04-29 using a signed read path and safe `runtime_evaluate()`
+  for `infra.resource.inspect`.
+
+### Known limitations
+- AVP-Sig v1 still signs the path without query-string binding to match
+  the deployed backend protocol. This is tracked for a future coordinated
+  AVP-Sig v2 backend + SDK rollout.
+- `controlled_action()` does not auto-approve human-control decisions.
+  Callers must resume with `execute_after_approval()` after principal
+  approval.
+
 ## [0.6.2] — 2026-04-27
 
 ### Added — DelegationReceipt primitive
