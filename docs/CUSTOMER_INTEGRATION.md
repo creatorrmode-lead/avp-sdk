@@ -96,6 +96,11 @@ elif result.status == "blocked":
 
 `controlled_action()` never auto-approves. If approval is required, the principal must approve the request with their own DID.
 
+Production applications should also catch SDK exceptions around
+`controlled_action(...)`, especially `AVPRateLimitError`, `AVPValidationError`,
+and `AVPServerError`. The first-action template shows one minimal handling
+pattern.
+
 The first-action template intentionally does not generate a DelegationReceipt
 for you. In production, the principal or workflow owner issues it after
 selecting the agent and defining the allowed action scope. Put that signed

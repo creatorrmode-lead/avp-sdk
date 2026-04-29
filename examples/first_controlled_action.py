@@ -25,7 +25,14 @@ import os
 from pathlib import Path
 from typing import Any
 
-from agentveil import AVPAgent, ControlledActionOutcome
+from agentveil import (
+    AVPAgent,
+    AVPError,
+    AVPRateLimitError,
+    AVPServerError,
+    AVPValidationError,
+    ControlledActionOutcome,
+)
 
 
 BASE_URL = os.getenv("AVP_BASE_URL", "https://agentveil.dev")
@@ -82,6 +89,26 @@ def handle_outcome(result: ControlledActionOutcome) -> None:
     print(f"reason={result.reason}")
 
 
+def print_sdk_error(exc: AVPError) -> None:
+    if isinstance(exc, AVPRateLimitError):
+        print("error=rate_limited")
+        print(f"retry_after={exc.retry_after}")
+        return
+
+    if isinstance(exc, AVPValidationError):
+        print("error=validation_failed")
+        print(f"detail={exc.message}")
+        return
+
+    if isinstance(exc, AVPServerError):
+        print("error=backend_unavailable")
+        print("next_action=retry later with backoff")
+        return
+
+    print("error=avp_request_failed")
+    print(f"detail={exc.message}")
+
+
 def main() -> int:
     agent = AVPAgent.load(BASE_URL, name=AGENT_NAME, passphrase=AGENT_PASSPHRASE)
 
@@ -104,13 +131,18 @@ def main() -> int:
         return 1
 
     params = json.loads(PARAMS_JSON)
-    result = agent.controlled_action(
-        action=ACTION,
-        resource=RESOURCE,
-        environment=ENVIRONMENT,
-        params=params,
-        delegation_receipt=delegation_receipt,
-    )
+    try:
+        result = agent.controlled_action(
+            action=ACTION,
+            resource=RESOURCE,
+            environment=ENVIRONMENT,
+            params=params,
+            delegation_receipt=delegation_receipt,
+        )
+    except AVPError as exc:
+        print_sdk_error(exc)
+        return 1
+
     handle_outcome(result)
     return 0
 
