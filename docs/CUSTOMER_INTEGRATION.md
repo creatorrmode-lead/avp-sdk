@@ -68,6 +68,32 @@ A DelegationReceipt is issued by the principal or workflow owner that authorizes
 
 Use `can_trust()` before selecting an agent, then issue or obtain a DelegationReceipt for the selected agent before calling `controlled_action(...)`. Reputation helps selection; delegation authorizes the runtime action.
 
+For guided pilots, the principal can issue the current v1 receipt locally:
+
+```python
+from datetime import timedelta
+
+receipt = principal.issue_delegation_receipt(
+    agent_did=agent.did,
+    allowed_categories=["infrastructure"],
+    valid_for=timedelta(hours=1),
+    max_spend=None,
+)
+```
+
+The principal signs with its local AVP identity. AVP never receives the
+principal private key.
+
+DelegationReceipt v1 only emits predicates the current Runtime Gate enforces:
+`allowed_category` and optional `max_spend`. It does not contain exact
+`allowed_actions`, `allowed_resources`, or `allowed_environments` predicates.
+Exact-scope issuance is a later protocol/backend phase.
+
+The receipt is authority evidence, not execution permission by itself.
+Runtime Gate still evaluates the requested action, resource, environment,
+receipt validity, category, financial caps, Governance, and Human Approval
+before any execution path can proceed.
+
 ## First Controlled Action
 
 Use `examples/first_controlled_action.py` as the customer template. By default

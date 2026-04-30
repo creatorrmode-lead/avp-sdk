@@ -84,17 +84,32 @@ Confirm the customer environment is using the current signed-query path.
 Before the first controlled action, obtain a DelegationReceipt from the
 principal or workflow owner.
 
-The receipt should bind:
+For the guided pilot path, the principal can issue the current v1 receipt
+locally with:
+
+```python
+from datetime import timedelta
+
+receipt = principal.issue_delegation_receipt(
+    agent_did=agent.did,
+    allowed_categories=["infrastructure"],
+    valid_for=timedelta(hours=1),
+)
+```
+
+The receipt binds:
 
 - principal or workflow owner identity;
 - agent DID;
-- allowed action;
-- allowed resource;
-- allowed environment;
+- allowed category predicates;
 - validity window;
 - any customer-specific constraints needed for review.
 
-The first-action template does not generate this receipt. Provide it through
+DelegationReceipt v1 does not emit exact action, resource, or environment
+predicates. Runtime Gate and execution cross-check the requested action,
+resource, and environment after the receipt is supplied.
+
+Provide the signed receipt to the first-action template through
 `AVP_DELEGATION_RECEIPT_FILE` or `AVP_DELEGATION_RECEIPT_JSON`.
 
 ## First Controlled Action

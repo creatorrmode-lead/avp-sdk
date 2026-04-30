@@ -16,9 +16,9 @@ import json
 import os
 import logging
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError, version
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from nacl.signing import SigningKey, VerifyKey
@@ -1518,6 +1518,88 @@ class AVPAgent:
             receipt_jcs=receipt_jcs,
             receipt=json.loads(receipt_jcs),
         )
+
+    def issue_delegation_receipt(
+        self,
+        *,
+        agent_did: str,
+        allowed_categories: list[str],
+        valid_for: timedelta,
+        max_spend: Optional[dict[str, Any]] = None,
+        purpose: str = "Guided pilot delegation",
+        **unsupported_scope_kwargs: Any,
+    ) -> dict[str, Any]:
+        """
+        Locally issue a v1 DelegationReceipt for an agent.
+
+        This wrapper only emits predicates the current backend Runtime Gate
+        already enforces: `allowed_category` and optional `max_spend`. It does
+        not grant execution by itself; Runtime Gate, Governance, Human
+        Approval, and execution cross-checks remain authoritative.
+        """
+        unsupported = {
+            key
+            for key in unsupported_scope_kwargs
+            if key in {"allowed_actions", "allowed_resources", "allowed_environments"}
+        }
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(
+                f"unsupported exact-scope delegation fields for v1: {names}"
+            )
+        if unsupported_scope_kwargs:
+            names = ", ".join(sorted(unsupported_scope_kwargs))
+            raise TypeError(f"unexpected delegation receipt arguments: {names}")
+        if not isinstance(valid_for, timedelta) or valid_for.total_seconds() <= 0:
+            raise ValueError("valid_for must be a positive timedelta")
+        if (
+            not isinstance(allowed_categories, list)
+            or not allowed_categories
+            or any(
+                not isinstance(category, str) or not category
+                for category in allowed_categories
+            )
+        ):
+            raise ValueError("allowed_categories must be a non-empty list of strings")
+
+        scope: list[dict[str, Any]] = [
+            {"predicate": "allowed_category", "value": category}
+            for category in allowed_categories
+        ]
+        if max_spend is not None:
+            if not isinstance(max_spend, dict):
+                raise ValueError("max_spend must be a dict with currency and amount")
+            currency = max_spend.get("currency")
+            amount = max_spend.get("amount")
+            if not isinstance(currency, str) or len(currency) != 3:
+                raise ValueError("max_spend.currency must be a 3-letter ISO 4217 code")
+            if (
+                isinstance(amount, bool)
+                or not isinstance(amount, (int, float))
+                or amount <= 0
+            ):
+                raise ValueError("max_spend.amount must be a positive number")
+            scope.append({
+                "predicate": "max_spend",
+                "currency": currency,
+                "amount": amount,
+            })
+
+        from agentveil.delegation import issue_delegation
+
+        return issue_delegation(
+            principal_private_key=self._private_key,
+            agent_did=agent_did,
+            scope=scope,
+            purpose=purpose,
+            valid_for=valid_for,
+        )
+
+    def verify_delegation_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        """Verify a DelegationReceipt offline using the v1 verifier."""
+        from agentveil.delegation import verify_delegation
+
+        return verify_delegation(receipt)
 
     def build_proof_packet(
         self,
