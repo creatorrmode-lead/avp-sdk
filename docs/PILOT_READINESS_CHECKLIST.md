@@ -1,0 +1,199 @@
+# Pilot Readiness Checklist
+
+This checklist is for the first guided customer integration using
+`agentveil==0.7.2` and the production AVP API. It is a pilot operating
+checklist, not a self-service onboarding promise.
+
+## Scope
+
+Use this checklist for one bounded controlled-action workflow with a known
+principal, one customer agent DID, and one explicit action/resource/environment
+scope.
+
+Out of scope for this pilot checklist:
+
+- fully self-service onboarding
+- automatic DelegationReceipt issuance
+- dashboard or inbox workflows
+- production deploy, SDK release, tag, or PyPI publish
+- marketing, website, or public positioning changes
+
+## Before Starting
+
+- Confirm the customer use case has one concrete controlled action.
+- Confirm the action can be safely tested with non-destructive parameters first.
+- Confirm the principal or workflow owner is identified.
+- Confirm who can approve the action if Human Approval is required.
+- Confirm where proof artifacts will be stored by the customer.
+- Confirm no private keys, cloud credentials, raw private logs, or secrets will
+  be sent to AVP.
+
+## Environment Setup
+
+- Install the pinned SDK:
+
+  ```bash
+  python -m pip install agentveil==0.7.2
+  ```
+
+- Create or load the local agent identity.
+- Store the local Ed25519 private key securely.
+- Use `AVPAgent.save(passphrase=...)` when persisting the identity.
+- Register the DID with AVP.
+- Verify that the DID is accepted for signed runtime requests.
+- Treat a locally generated DID as incomplete until the production API knows and
+  verifies it.
+
+## Preflight Gate
+
+Run preflight before any Runtime Gate or execution call:
+
+```python
+report = agent.integration_preflight()
+```
+
+Proceed only when:
+
+- `report.ready` is true;
+- API reachability passed;
+- the DID is registered;
+- verification status is acceptable when visible;
+- the safe signed read check succeeds.
+
+If preflight fails:
+
+- follow `report.next_action`;
+- respect `report.retry_after` when present;
+- do not call `controlled_action(...)` yet.
+
+This preflight does not execute actions, create approvals, or prove that the
+customer's DelegationReceipt is valid for a specific action.
+
+## Signed Query Check
+
+Confirm the customer environment is using the current signed-query path.
+
+- SDK must be `agentveil==0.7.2`.
+- Signed requests with query parameters must use AVP-Sig v2.
+- AVP-Sig v1 remains valid only for signed requests without query parameters.
+- A `401` on signed query requests should be treated as a setup/auth issue
+  until proven otherwise.
+
+## DelegationReceipt
+
+Before the first controlled action, obtain a DelegationReceipt from the
+principal or workflow owner.
+
+The receipt should bind:
+
+- principal or workflow owner identity;
+- agent DID;
+- allowed action;
+- allowed resource;
+- allowed environment;
+- validity window;
+- any customer-specific constraints needed for review.
+
+The first-action template does not generate this receipt. Provide it through
+`AVP_DELEGATION_RECEIPT_FILE` or `AVP_DELEGATION_RECEIPT_JSON`.
+
+## First Controlled Action
+
+Use `examples/first_controlled_action.py` as the operating template.
+
+Start with the default safe path:
+
+```bash
+python examples/first_controlled_action.py
+```
+
+Proceed to Runtime Gate only after preflight is ready and the action scope has
+been reviewed:
+
+```bash
+AVP_RUN_CONTROLLED_ACTION=1 \
+AVP_DELEGATION_RECEIPT_FILE=/path/to/delegation_receipt.json \
+python examples/first_controlled_action.py
+```
+
+For the first pilot run, prefer a read-only or inspection-style action such as
+`infra.resource.inspect` in a non-production environment unless the customer
+has explicitly approved a higher-risk path.
+
+## Outcome Handling
+
+The integration must handle all controlled-action outcomes.
+
+`executed`:
+
+- store `receipt_jcs` exactly as returned;
+- store the Runtime Gate `audit_id`;
+- record the action, resource, environment, and SDK version used.
+
+`approval_required`:
+
+- store the Runtime Gate `audit_id`;
+- store the `approval_id`;
+- route approval to the principal;
+- resume only after the principal approves;
+- store the signed approval receipt and final execution receipt when available.
+
+`blocked`:
+
+- do not execute the action outside AVP;
+- surface the block reason to the operator or customer workflow owner;
+- preserve the decision metadata needed for review.
+
+SDK/API errors:
+
+- `401`: check signature, timestamp, nonce, DID registration, and AVP-Sig v2 for
+  query-bearing requests;
+- `403`: check verification, suspension, revocation, and role permissions;
+- `409`: handle unsafe or incomplete workflow state such as approval required;
+- `429`: back off and respect retry guidance;
+- `503`: treat as backend unavailable or fail-closed signing dependency.
+
+## Proof Artifacts
+
+Retain these artifacts for the pilot record:
+
+- DelegationReceipt;
+- agent DID and public key;
+- Runtime Gate `audit_id`;
+- raw signed execution receipt text (`receipt_jcs`);
+- signed approval receipt, if approval was required;
+- remediation case IDs and evidence hashes, if contested;
+- SDK version and base URL;
+- timestamped operator notes for any manual customer step.
+
+Do not rewrite signed receipt text. Store the raw JCS string as the proof
+artifact and use parsed receipt fields only as a convenience view.
+
+## Go/No-Go Criteria
+
+The pilot is ready for the first customer-controlled action when:
+
+- SDK install is pinned to `agentveil==0.7.2`;
+- local identity is created or loaded securely;
+- DID registration and verification state are acceptable;
+- `integration_preflight()` is ready;
+- signed query requests use AVP-Sig v2;
+- a DelegationReceipt exists for the exact requested scope;
+- the first action is bounded and reviewed;
+- `executed`, `approval_required`, and `blocked` paths are handled;
+- proof artifact storage is defined before execution.
+
+Do not treat the pilot as self-service ready if any step requires operator
+interpretation or manual backend intervention.
+
+## Current Limitations
+
+- DelegationReceipt issuance is still an integration-owned step.
+- Proof packet export is manual: collect the receipt, `audit_id`, approval
+  receipt, and remediation references explicitly.
+- Approval discovery/routing depends on the integration's workflow.
+- Error handling still requires some mapping from HTTP status and SDK exception
+  type to customer-facing next action.
+- A successful preflight is required but not sufficient for action execution;
+  Runtime Gate, Governance, Human Approval, and execution can still block or
+  require approval.

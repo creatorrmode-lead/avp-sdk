@@ -2,6 +2,9 @@
 
 This guide is for integrating AVP into a real controlled-action workflow. It is not a demo path and does not bypass runtime safety.
 
+For a first guided customer rollout, use
+`docs/PILOT_READINESS_CHECKLIST.md` before running a controlled action.
+
 ## What AVP Controls
 
 AVP keeps the reputation stack and adds runtime enforcement:
