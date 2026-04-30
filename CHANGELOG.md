@@ -2,6 +2,31 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [Unreleased]
+
+### Added
+- `ProofPacket` typed result object and `AVPAgent.build_proof_packet(...)` for
+  bundling explicit controlled-action proof artifacts while preserving raw
+  signed receipt strings.
+- `AVPAgent.issue_delegation_receipt(...)` and
+  `AVPAgent.verify_delegation_receipt(...)` ergonomic wrappers around the
+  existing DelegationReceipt v1 issue/verify primitives.
+- `docs/PILOT_READINESS_CHECKLIST.md` for guided first customer integrations.
+
+### Changed
+- `AVPAgent.integration_preflight()` now distinguishes `agent_revoked`,
+  `agent_migrated`, and `nonce_replay` setup/auth states.
+- Customer integration docs now clarify that DelegationReceipt v1 covers
+  current backend-enforced category and financial predicates, while requested
+  action, resource, and environment are supplied to Runtime Gate and
+  cross-checked there.
+- `pyproject.toml` now uses SPDX license metadata syntax: `license = "MIT"`.
+
+### Not released
+- These changes are on `main` and are not in the PyPI `agentveil==0.7.2`
+  package.
+- No version bump, tag, PyPI publish, or GitHub Release has been performed.
+
 ## [0.7.2] — 2026-04-29
 
 ### Added

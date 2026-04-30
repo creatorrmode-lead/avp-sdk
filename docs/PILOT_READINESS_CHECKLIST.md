@@ -1,8 +1,11 @@
 # Pilot Readiness Checklist
 
 This checklist is for the first guided customer integration using
-`agentveil==0.7.2` and the production AVP API. It is a pilot operating
-checklist, not a self-service onboarding promise.
+the production AVP API. It is a pilot operating checklist, not a self-service
+onboarding promise.
+
+Note: helper examples and preflight statuses added after `agentveil==0.7.2`
+describe unreleased `main` behavior until the next SDK release.
 
 ## Scope
 
@@ -35,6 +38,10 @@ Out of scope for this pilot checklist:
   ```bash
   python -m pip install agentveil==0.7.2
   ```
+
+  The `main` branch docs also include unreleased helpers not present in
+  `agentveil==0.7.2`; use the eventual next SDK release before following those
+  helper examples from a PyPI install.
 
 - Create or load the local agent identity.
 - Store the local Ed25519 private key securely.
@@ -86,7 +93,8 @@ customer's DelegationReceipt is valid for a specific action.
 
 Confirm the customer environment is using the current signed-query path.
 
-- SDK must be `agentveil==0.7.2`.
+- SDK must be `agentveil==0.7.2` or a later release containing the documented
+  helper/status behavior.
 - Signed requests with query parameters must use AVP-Sig v2.
 - AVP-Sig v1 remains valid only for signed requests without query parameters.
 - A `401` on signed query requests should be treated as a setup/auth issue
@@ -204,7 +212,8 @@ artifact and use parsed receipt fields only as a convenience view.
 
 The pilot is ready for the first customer-controlled action when:
 
-- SDK install is pinned to `agentveil==0.7.2`;
+- SDK install is pinned to `agentveil==0.7.2` or a later release containing
+  the documented helper/status behavior;
 - local identity is created or loaded securely;
 - DID registration and verification state are acceptable;
 - `integration_preflight()` is ready;
