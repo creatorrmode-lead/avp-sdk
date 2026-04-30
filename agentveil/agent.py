@@ -1690,7 +1690,7 @@ class AVPAgent:
         try:
             sdk_version = version("agentveil")
         except PackageNotFoundError:
-            sdk_version = "0.7.2"
+            sdk_version = "0.7.3"
 
         return ProofPacket(
             agent_did=self._did,

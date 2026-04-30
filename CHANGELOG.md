@@ -2,7 +2,7 @@
 
 All notable changes to the `agentveil` SDK.
 
-## [Unreleased]
+## [0.7.3] — 2026-04-30
 
 ### Added
 - `ProofPacket` typed result object and `AVPAgent.build_proof_packet(...)` for
@@ -21,11 +21,6 @@ All notable changes to the `agentveil` SDK.
   action, resource, and environment are supplied to Runtime Gate and
   cross-checked there.
 - `pyproject.toml` now uses SPDX license metadata syntax: `license = "MIT"`.
-
-### Not released
-- These changes are on `main` and are not in the PyPI `agentveil==0.7.2`
-  package.
-- No version bump, tag, PyPI publish, or GitHub Release has been performed.
 
 ## [0.7.2] — 2026-04-29
 

@@ -5,11 +5,6 @@ This guide is for integrating AVP into a real controlled-action workflow. It is 
 For a first guided customer rollout, use
 `docs/PILOT_READINESS_CHECKLIST.md` before running a controlled action.
 
-Note: sections that reference `issue_delegation_receipt(...)`,
-`build_proof_packet(...)`, or the `agent_revoked` / `agent_migrated` /
-`nonce_replay` preflight states describe unreleased `main` behavior. They are
-not available in the PyPI `agentveil==0.7.2` package.
-
 ## What AVP Controls
 
 AVP keeps the reputation stack and adds runtime enforcement:
