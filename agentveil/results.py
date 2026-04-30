@@ -83,6 +83,8 @@ class ProofPacket:
     delegation_receipt: dict[str, Any]
     outcome_status: ControlledActionStatus
     audit_id: Optional[str] = None
+    decision_receipt_jcs: Optional[str] = None
+    decision_receipt: Optional[dict[str, Any]] = None
     execution_receipt_jcs: Optional[str] = None
     execution_receipt: Optional[dict[str, Any]] = None
     approval: Optional[dict[str, Any]] = None
@@ -115,6 +117,8 @@ class ProofPacket:
             "delegation_receipt",
             "outcome_status",
             "audit_id",
+            "decision_receipt_jcs",
+            "decision_receipt",
             "execution_receipt_jcs",
             "execution_receipt",
             "approval",

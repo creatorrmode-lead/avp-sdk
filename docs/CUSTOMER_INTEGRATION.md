@@ -132,6 +132,7 @@ To export an explicit proof packet from local artifacts, call
 packet = agent.build_proof_packet(
     delegation_receipt=delegation_receipt,
     outcome=result,
+    decision_receipt_jcs=decision_receipt_jcs,  # recommended
     approval_receipt_jcs=approval_receipt_jcs,  # optional
     remediation_case=remediation_case,          # optional
 )
@@ -140,8 +141,9 @@ proof_packet = packet.to_dict()
 ```
 
 The helper does not fetch remote resources. It preserves raw signed receipt
-text as `execution_receipt_jcs` and includes parsed receipt fields only as a
-convenience view.
+text as `decision_receipt_jcs`, `execution_receipt_jcs`, and
+`approval_receipt_jcs`, and includes parsed receipt fields only as a convenience
+view.
 
 Production applications should also catch SDK exceptions around
 `controlled_action(...)`, especially `AVPRateLimitError`, `AVPValidationError`,
@@ -240,3 +242,58 @@ Signed execution and approval receipts are immutable proof artifacts. Remediatio
 `examples/first_controlled_action.py` can write the explicit proof packet when
 `AVP_PROOF_PACKET_OUT` is set. The generated packet is a retention helper, not
 a replacement for the raw signed receipt strings.
+
+## Offline Proof Verification
+
+The verifier APIs in this section describe unreleased main-branch SDK behavior
+until the next SDK release includes them.
+
+Signature verification and AVP semantic verification are separate.
+
+`verify_signed_jcs(...)` proves that one JCS receipt was signed by the DID in
+its `proof.verificationMethod`:
+
+```python
+from agentveil import verify_signed_jcs
+
+verified = verify_signed_jcs(receipt_jcs, expected_signer_did=trusted_signer_did)
+signer_did = verified["signer_did"]
+body = verified["body"]
+digest = verified["digest"]
+```
+
+For AVP-issued receipts, configure trusted backend signer DID(s). A structurally
+valid receipt signed by an untrusted DID must not be accepted as AVP proof.
+
+`verify_proof_packet(...)` checks the AVP proof chain:
+
+```python
+from agentveil import verify_proof_packet
+
+verified_packet = verify_proof_packet(
+    proof_packet,
+    trusted_decision_signer_dids={trusted_decision_signer_did},
+    trusted_execution_signer_dids={trusted_execution_signer_did},
+    trusted_human_approval_signer_dids={trusted_human_approval_signer_did},
+)
+```
+
+The packet verifier checks signed DecisionReceipt, HumanApprovalReceipt, and
+ExecutionReceipt artifacts when present; verifies trusted backend signer DID(s);
+compares cross-receipt hashes; and checks agent/action/resource/environment
+linkage. `trusted_backend_signer_dids={...}` remains available as a
+compatibility fallback for deployments that intentionally use one backend
+signer for all AVP-issued receipt types.
+
+Current receipt schema versions:
+
+| Receipt | Current schema | Signer |
+| --- | --- | --- |
+| DecisionReceipt | `decision_receipt/2` | AVP backend decision/execution signer |
+| HumanApprovalReceipt | `human_approval_receipt/2` | AVP backend human approval signer |
+| ExecutionReceipt | `execution_receipt/2` | AVP backend decision/execution signer |
+| DelegationReceipt | delegation context v1 | Principal DID |
+
+Legacy receipt versions can still be signature-verified. Semantic verification
+is version-aware and does not require fields that did not exist in older signed
+schemas.

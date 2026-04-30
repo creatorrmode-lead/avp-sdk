@@ -192,6 +192,7 @@ Retain these artifacts for the pilot record:
 - agent DID and public key;
 - Runtime Gate `audit_id`;
 - raw signed execution receipt text (`receipt_jcs`);
+- raw signed Runtime Gate DecisionReceipt text, when fetched for review;
 - proof packet generated from explicit local artifacts, if used;
 - signed approval receipt, if approval was required;
 - remediation case IDs and evidence hashes, if contested;
@@ -200,6 +201,42 @@ Retain these artifacts for the pilot record:
 
 Do not rewrite signed receipt text. Store the raw JCS string as the proof
 artifact and use parsed receipt fields only as a convenience view.
+
+## Verify Proof Artifacts Offline
+
+The verifier APIs in this section describe unreleased main-branch SDK behavior
+until the next SDK release includes them.
+
+For external review, keep signature verification separate from AVP semantic
+verification:
+
+- `verify_signed_jcs(...)` checks one signed JCS artifact and returns the signer
+  DID, schema version, body, and SHA-256 digest.
+- `verify_proof_packet(...)` checks trusted AVP backend signer DID(s), receipt
+  hashes, and action/resource/environment/agent linkage across the packet.
+
+Use role-specific trusted AVP signer DID sets for DecisionReceipt,
+ExecutionReceipt, and HumanApprovalReceipt. Do not accept an AVP-issued receipt
+solely because it has a valid signature from an arbitrary DID. The
+`trusted_backend_signer_dids` fallback is only for deployments that
+intentionally use one backend signer for all AVP-issued receipt types.
+
+Required artifacts by flow:
+
+| Flow | Required proof artifacts |
+| --- | --- |
+| Blocked | DelegationReceipt, DecisionReceipt |
+| Executed without approval | DelegationReceipt, DecisionReceipt, ExecutionReceipt |
+| Executed after approval | DelegationReceipt, DecisionReceipt, HumanApprovalReceipt, ExecutionReceipt |
+| Contested/remediated | Same as the underlying flow, plus remediation case IDs/evidence hashes |
+
+Current signed receipt schemas:
+
+| Receipt | Current schema |
+| --- | --- |
+| DecisionReceipt | `decision_receipt/2` |
+| HumanApprovalReceipt | `human_approval_receipt/2` |
+| ExecutionReceipt | `execution_receipt/2` |
 
 ## Go/No-Go Criteria
 

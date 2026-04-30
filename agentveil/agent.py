@@ -1668,6 +1668,7 @@ class AVPAgent:
         self,
         delegation_receipt: dict,
         outcome: ControlledActionOutcome,
+        decision_receipt_jcs: Optional[str] = None,
         approval_receipt_jcs: Optional[str] = None,
         remediation_case: Optional[dict] = None,
         remediation_refs: Optional[list[dict]] = None,
@@ -1676,12 +1677,16 @@ class AVPAgent:
         Build a proof packet from explicit local artifacts only.
 
         This helper does not fetch remote resources or modify signed receipt
-        text. Store `execution_receipt_jcs` and `approval_receipt_jcs` exactly
-        as returned by AVP.
+        text. Store `decision_receipt_jcs`, `execution_receipt_jcs`, and
+        `approval_receipt_jcs` exactly as returned by AVP.
         """
         audit_id = outcome.audit_id
         if audit_id is None and outcome.decision is not None:
             audit_id = outcome.decision.get("audit_id")
+
+        decision_receipt = None
+        if decision_receipt_jcs is not None:
+            decision_receipt = json.loads(decision_receipt_jcs)
 
         approval_receipt = None
         if approval_receipt_jcs is not None:
@@ -1700,6 +1705,8 @@ class AVPAgent:
             delegation_receipt=deepcopy(delegation_receipt),
             outcome_status=outcome.status,
             audit_id=audit_id,
+            decision_receipt_jcs=decision_receipt_jcs,
+            decision_receipt=decision_receipt,
             execution_receipt_jcs=outcome.receipt_jcs,
             execution_receipt=deepcopy(outcome.receipt),
             approval=deepcopy(outcome.approval),

@@ -182,6 +182,7 @@ def test_build_proof_packet_preserves_raw_receipt_and_uses_no_remote_fetch():
         packet = agent.build_proof_packet(
             delegation_receipt=delegation_receipt,
             outcome=outcome,
+            decision_receipt_jcs='{"schema_version":"decision_receipt/2"}',
         )
 
     client_mock.assert_not_called()
@@ -190,6 +191,8 @@ def test_build_proof_packet_preserves_raw_receipt_and_uses_no_remote_fetch():
     assert packet.base_url == "http://localhost:8000"
     assert packet.sdk_version
     assert packet.audit_id == "urn:uuid:audit"
+    assert packet.decision_receipt_jcs == '{"schema_version":"decision_receipt/2"}'
+    assert packet.decision_receipt["schema_version"] == "decision_receipt/2"
     assert packet.execution_receipt_jcs == receipt_jcs
     assert packet.execution_receipt["status"] == "SUCCESS"
 
@@ -197,6 +200,7 @@ def test_build_proof_packet_preserves_raw_receipt_and_uses_no_remote_fetch():
     assert packet.delegation_receipt["scope"]["action"] == "infra.resource.inspect"
 
     packet_dict = packet.to_dict()
+    assert packet_dict["decision_receipt_jcs"] == '{"schema_version":"decision_receipt/2"}'
     assert packet_dict["execution_receipt_jcs"] == receipt_jcs
     assert "approval_receipt_jcs" not in packet_dict
     assert "remediation_case" not in packet_dict
