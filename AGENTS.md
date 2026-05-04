@@ -69,7 +69,7 @@ python -m mcp_server.avp
 
 12 tools: check reputation, verify identity, search agents, submit attestation, get audit trail, and more.
 
-Glama directory: https://glama.ai/mcp/servers/creatorrmode-lead/avp-sdk
+Glama directory: https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk
 
 ## DID support
 

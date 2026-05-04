@@ -2,6 +2,6 @@
   "$schema": "https://glama.ai/mcp/schemas/server.json",
   "description": "Trust enforcement for autonomous agents — identity, reputation, and admission control",
   "maintainers": [
-    "creatorrmode-lead"
+    "agentveil-protocol"
   ]
 }
