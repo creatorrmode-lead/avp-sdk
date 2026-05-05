@@ -120,6 +120,38 @@ class TestRegisterContract:
         assert pow_data["difficulty"] == 20
 
 
+class TestOnboardingContract:
+    """Verify onboarding helper auth matches backend access mode."""
+
+    def test_get_onboarding_challenge_uses_signed_owner_get(self):
+        agent = _make_agent()
+        captured = {}
+
+        def mock_get(url, **kwargs):
+            captured["url"] = url
+            captured["headers"] = kwargs.get("headers")
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = {
+                "challenge_id": "challenge-1",
+                "challenge_text": "Describe your code review controls.",
+                "challenge_type": "capability_description",
+                "target_capability": "code_review",
+                "deadline": "2026-05-05T00:00:00Z",
+                "status": "pending",
+            }
+            return resp
+
+        with patch.object(httpx.Client, "get", side_effect=mock_get):
+            result = agent.get_onboarding_challenge()
+
+        expected_path = f"/v1/onboarding/{agent.did}/challenge"
+        assert captured["url"] == expected_path
+        assert "Authorization" in captured["headers"]
+        assert f'did="{agent.did}"' in captured["headers"]["Authorization"]
+        assert result["challenge_id"] == "challenge-1"
+
+
 class TestAttestContract:
     """Verify attest() supports all fields from AttestationCreateRequest."""
 

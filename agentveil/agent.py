@@ -1695,7 +1695,7 @@ class AVPAgent:
         try:
             sdk_version = version("agentveil")
         except PackageNotFoundError:
-            sdk_version = "0.7.4"
+            sdk_version = "0.7.5"
 
         return ProofPacket(
             agent_did=self._did,
@@ -2057,12 +2057,16 @@ class AVPAgent:
         """
         Get the current onboarding challenge for this agent.
 
+        This owner-only endpoint is fetched with AVP-Sig automatically.
+
         Returns:
             Challenge dict with challenge_id, challenge_text, challenge_type,
             target_capability, deadline, status. None if no challenge exists.
         """
+        path = f"/v1/onboarding/{self._did}/challenge"
+        headers = self._auth_headers("GET", path)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get(f"/v1/onboarding/{self._did}/challenge")
+            r = c.get(path, headers=headers)
             if r.status_code == 404:
                 return None
             return self._handle_response(r)

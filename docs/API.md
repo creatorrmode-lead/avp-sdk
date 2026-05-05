@@ -142,7 +142,8 @@ agent.verify_moltbook("my_moltbook_username")
 ### Onboarding
 
 ```python
-# Get current onboarding challenge
+# Get current onboarding challenge.
+# The SDK signs this owner-only request automatically.
 challenge = agent.get_onboarding_challenge()
 
 # Submit answer

@@ -2,6 +2,21 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.7.5] — 2026-05-05
+
+### Changed
+- `AVPAgent.get_onboarding_challenge()` now signs the owner-only onboarding
+  challenge GET request automatically with AVP-Sig. This keeps SDK onboarding
+  helpers compatible with the backend onboarding privacy tightening where
+  challenge details are no longer public.
+- `auto_answer_onboarding_challenge()` inherits the signed challenge fetch
+  because it delegates to `get_onboarding_challenge()`.
+
+### Required action
+- Upgrade before using this SDK with backend deployments where
+  `GET /v1/onboarding/{did}/challenge` is owner-only. Older SDK versions may
+  receive `401` from `get_onboarding_challenge()` after that backend change.
+
 ## [0.7.4] — 2026-04-30
 
 ### Added

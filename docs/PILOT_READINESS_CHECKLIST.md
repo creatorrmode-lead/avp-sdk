@@ -33,7 +33,7 @@ Out of scope for this pilot checklist:
 - Install the pinned SDK:
 
   ```bash
-  python -m pip install agentveil==0.7.4
+  python -m pip install agentveil==0.7.5
   ```
 
 - Create or load the local agent identity.
@@ -86,8 +86,8 @@ customer's DelegationReceipt is valid for a specific action.
 
 Confirm the customer environment is using the current signed-query path.
 
-- SDK must be `agentveil==0.7.4` or a later release containing the documented
-  helper/status behavior.
+- SDK must be `agentveil==0.7.5` or a later release containing the documented
+  signed-query and onboarding challenge helper behavior.
 - Signed requests with query parameters must use AVP-Sig v2.
 - AVP-Sig v1 remains valid only for signed requests without query parameters.
 - A `401` on signed query requests should be treated as a setup/auth issue
@@ -239,8 +239,8 @@ Current signed receipt schemas:
 
 The pilot is ready for the first customer-controlled action when:
 
-- SDK install is pinned to `agentveil==0.7.4` or a later release containing
-  the documented helper/status behavior;
+- SDK install is pinned to `agentveil==0.7.5` or a later release containing
+  the documented signed-query and onboarding challenge helper behavior;
 - local identity is created or loaded securely;
 - DID registration and verification state are acceptable;
 - `integration_preflight()` is ready;
