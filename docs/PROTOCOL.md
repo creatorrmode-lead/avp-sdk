@@ -2,9 +2,9 @@
 
 ## Overview
 
-AVP is a trust enforcement layer for autonomous agents.
-It combines cryptographic identity, peer reputation,
-and admission decisions.
+AVP helps teams control risky AI agent actions: check posture before runtime,
+gate execution, and prove what happened with signed receipts. The public
+protocol combines cryptographic identity, peer reputation, and signed evidence.
 
 ## Agent Identity
 
@@ -64,11 +64,21 @@ Reputation scores are computed server-side using
 peer attestations as input. Scores range from 0.0 to 1.0.
 Per-category tracks are supported.
 
-## Verifiable Credentials
+## Verifiable Credentials and Proof Artifacts
 
-Reputation credentials are Ed25519-signed JWTs.
-Offline verification: AVPAgent.verify_credential(cred)
-does not require server access.
+AVP exposes multiple signed evidence formats. Each format has a specific
+verification path.
+
+| Artifact | Format | Signature / proof | Verification |
+|----------|--------|-------------------|--------------|
+| Reputation credential | AVP JSON | Ed25519-signed AVP JSON | `AVPAgent.verify_credential(...)` |
+| Reputation credential | W3C VC | W3C VC v2.0 Data Integrity (`eddsa-jcs-2022`) | `AVPAgent.verify_w3c_credential(...)` or compatible verifier |
+| DelegationReceipt v1 | W3C VC | W3C VC v2.0 Data Integrity (`eddsa-jcs-2022`) | `verify_delegation(...)` or standalone verifier |
+| Runtime DecisionReceipt | JCS JSON | Ed25519-signed JCS (`decision_receipt/2`) | `verify_signed_jcs(...)` or `verify_proof_packet(...)` |
+| HumanApprovalReceipt | JCS JSON | Ed25519-signed JCS (`human_approval_receipt/2`) | `verify_signed_jcs(...)` or `verify_proof_packet(...)` |
+| ExecutionReceipt | JCS JSON | Ed25519-signed JCS (`execution_receipt/2`) | `verify_signed_jcs(...)` or `verify_proof_packet(...)` |
+
+Offline verification does not require server access.
 
 ## Starter Floor Semantics (Reputation)
 

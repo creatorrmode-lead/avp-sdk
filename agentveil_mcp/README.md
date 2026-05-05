@@ -1,13 +1,12 @@
 # agentveil-mcp
 
-Model Context Protocol server for **Agent Veil Protocol** — the trust and
-reputation layer for autonomous AI agents. Enables any MCP-compatible client
-(Claude Desktop, Cursor, Windsurf, VS Code, and others) to check agent
-reputation, submit peer attestations, register agents, and verify the audit
-trail directly from a chat.
+Model Context Protocol server for **Agent Veil Protocol**. It exposes posture
+checks, trust decisions, audit verification, and signed evidence workflows for
+AI agent systems. Local/full mode includes 12 tools: 8 read-only tools and 4
+write tools. Hosted read-only mode exposes 8 tools.
 
-- **Status:** local-first (stdio). A hosted HTTP endpoint is planned in a
-  future slice.
+- **Status:** local/full mode over stdio; hosted read-only mode for public
+  catalog use.
 - **Package:** bundled inside `agentveil` on PyPI (installed via extras).
 - **License:** MIT.
 
@@ -251,5 +250,4 @@ single `"command": "agentveil-mcp"`. The `cwd` entry is no longer needed.
 
 ## Roadmap
 
-- **Next slice:** minimal smoke tests for packaging and tool wiring.
-- **Later:** hosted HTTP MCP endpoint and Glama resubmit.
+- **Next slice:** Glama metadata refresh and catalog recrawl.

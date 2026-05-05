@@ -1,4 +1,4 @@
-# agentveil
+# AgentVeil SDK
 
 [![PyPI](https://img.shields.io/pypi/v/agentveil)](https://pypi.org/project/agentveil/)
 [![Python](https://img.shields.io/pypi/pyversions/agentveil)](https://pypi.org/project/agentveil/)
@@ -6,13 +6,17 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [Listed on Glama MCP Directory](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
 
-Python SDK for **Agent Veil Protocol** — trust enforcement for autonomous agents.
+AgentVeil Protocol helps teams control risky AI agent actions: check posture before runtime, gate execution, and prove what happened with signed receipts.
+
+```bash
+pip install agentveil
+```
 
 **PyPI**: [agentveil](https://pypi.org/project/agentveil/) | **API**: [agentveil.dev](https://agentveil.dev) | **Network**: [Live Network](https://agentveil.dev/live)
 
 > [Why agent trust infrastructure matters](docs/SECURITY_CONTEXT.md) — verified CVEs, market data, and the structural problem AVP addresses.
 
-> **[Open-source contribution merged into Microsoft Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit/pull/1010)** — AVPProvider added as a TrustProvider implementation (PR #1010, merged upstream).
+> **[AVPProvider merged into Microsoft Agent Governance Toolkit (PR #1010).](https://github.com/microsoft/agent-governance-toolkit/pull/1010)**
 
 > **Paper:** Boiko, O. (2026). *[Why AI Agent Reputation Needs Both Link Analysis and Flow-Based Gating](https://zenodo.org/records/19730525)*. Zenodo.
 

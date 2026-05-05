@@ -1,6 +1,6 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "description": "Trust enforcement for autonomous agents — identity, reputation, and admission control",
+  "description": "AgentVeil MCP exposes posture checks, trust decisions, audit verification, and signed evidence workflows for AI agent systems. Local/full mode includes 12 tools; hosted read-only mode exposes 8 tools.",
   "maintainers": [
     "oleg-bk"
   ]

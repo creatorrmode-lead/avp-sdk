@@ -1,32 +1,36 @@
 # AVP Roadmap
 
-## Current (v0.5.x) — Alpha
+## Current — Public SDK 0.7.5 + Production API
 
-- [x] W3C DID identity (Ed25519)
-- [x] EigenTrust reputation with NetFlow sybil gating
-- [x] Subgraph density collusion detection
-- [x] Attestation dispute resolution with auto-arbitrator
-- [x] IPFS audit trail
-- [x] `@avp_tracked` decorator
-- [x] `can_trust()` advisory trust decision
-- [x] Offline verifiable credentials (Ed25519-signed, TTL-based)
-- [x] 7 framework integrations (CrewAI, LangGraph, AutoGen, OpenAI, Hermes, Paperclip, MCP)
-- [x] MCP server (11 tools)
-- [x] Automated onboarding pipeline
-- [x] Trust Gate (reputation-based rate limiting)
-- [x] Bidirectional velocity cap + griefing protection
-- [x] Risk scoring (6 signals) with automatic penalty
+- [x] Public Python SDK 0.7.5 on PyPI: `pip install agentveil`
+- [x] Production API for reputation, trust checks, credentials, cards, audit verification, and latest public IPFS anchors
+- [x] W3C DID identity (`did:key`, Ed25519)
+- [x] AVP-Sig request signing for authenticated protocol calls
+- [x] Reputation and advisory trust checks for agent systems
+- [x] AVP JSON and W3C reputation credentials with offline verification
+- [x] Runtime proof helpers and signed evidence verification
+- [x] MCP server: 12 tools in local/full mode, with 8 read-only tools available in hosted mode
+- [x] Framework examples for CrewAI, LangGraph, AutoGen, OpenAI, Claude MCP, and Paperclip
+- [x] AVPProvider merged into Microsoft Agent Governance Toolkit (PR #1010)
 
-## Q2 2026 — Beta
+## Guided Pilot
 
-- [ ] LangGraph deep integration (trust-gated delegation)
+- [x] Runtime Gate decision flow for controlled-action workflows
+- [x] Human approval and execution receipt proof model
+- [x] Proof packet verification for signed runtime evidence
+- [ ] Wider self-service rollout for controlled-action workflows
+- [ ] Operator-facing documentation for guided production adoption
+
+## Planned
+
 - [ ] Public agent reputation dashboard
-- [ ] ERC-8004 bridge (off-chain <> on-chain reputation)
-- [ ] Federation between AVP nodes
-- [ ] Key rotation
-
-## Q3 2026 — v1.0
-
-- [ ] Self-hosting documentation
-- [ ] Enterprise admission control layer
+- [ ] Expanded hosted MCP catalog metadata and recrawl
+- [ ] Self-hosting documentation for approved deployments
 - [ ] Formal protocol specification v1.0
+- [ ] Key rotation documentation
+
+## Research / Future
+
+- [ ] Runtime proof and offline verification publication
+- [ ] ERC-8004 bridge exploration
+- [ ] Federation between AVP nodes
