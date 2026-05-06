@@ -5,14 +5,13 @@ Runs as an MCP (Model Context Protocol) server that Claude Desktop/Code
 can connect to. Exposes AVP reputation tools as MCP tools.
 
 Usage:
-    python -m agentveil.tools.claude_mcp
+    agentveil-mcp
 
 Config for claude_desktop_config.json:
     {
       "mcpServers": {
         "agentveil": {
-          "command": "python",
-          "args": ["-m", "agentveil.tools.claude_mcp"],
+          "command": "agentveil-mcp",
           "env": {
             "AVP_BASE_URL": "https://agentveil.dev",
             "AVP_AGENT_NAME": "claude_agent"
@@ -38,7 +37,7 @@ try:
 except ImportError:
     raise ImportError(
         "mcp is required for AVP Claude MCP server. "
-        "Install with: pip install mcp"
+        "Install with: pip install 'agentveil[mcp]'"
     )
 
 # Configuration from environment

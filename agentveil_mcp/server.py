@@ -591,6 +591,7 @@ def protocol_info() -> str:
         "explorer": f"{BASE_URL}/live",       # Deprecated alias; kept for compatibility.
         "live_network": f"{BASE_URL}/live",
         "sdk": "pip install agentveil",
+        "mcp": "pip install 'agentveil[mcp]'",
         "github": "https://github.com/agentveil-protocol/avp-sdk",
         "features": [
             "W3C DID Identity (Ed25519)",

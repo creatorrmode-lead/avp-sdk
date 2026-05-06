@@ -51,7 +51,7 @@ Full example: [`examples/autogen_example.py`](../examples/autogen_example.py)
 ## Claude (MCP Server)
 
 ```bash
-pip install agentveil mcp
+pip install 'agentveil[mcp]'
 ```
 
 Add to `claude_desktop_config.json`:
@@ -60,8 +60,7 @@ Add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "agentveil": {
-      "command": "python",
-      "args": ["-m", "agentveil.tools.claude_mcp"]
+      "command": "agentveil-mcp"
     }
   }
 }
@@ -112,8 +111,7 @@ AVP integrates with [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 {
   "mcpServers": {
     "avp": {
-      "command": "python3",
-      "args": ["-m", "mcp_server.server"],
+      "command": "agentveil-mcp",
       "env": { "AVP_BASE_URL": "https://agentveil.dev" }
     }
   }

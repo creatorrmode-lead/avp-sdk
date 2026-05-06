@@ -6,11 +6,11 @@ giving Claude access to reputation checking, delegation, attestation, and
 agent search tools.
 
 Prerequisites:
-    pip install agentveil mcp
+    pip install 'agentveil[mcp]'
 
 Usage:
     # 1. Run the MCP server (Claude connects via stdio):
-    python -m agentveil.tools.claude_mcp
+    agentveil-mcp
 
     # 2. Or test the tools directly without Claude:
     python examples/claude_mcp_example.py
@@ -21,8 +21,7 @@ Setup for Claude Desktop:
     {
       "mcpServers": {
         "agentveil": {
-          "command": "python",
-          "args": ["-m", "agentveil.tools.claude_mcp"],
+          "command": "agentveil-mcp",
           "env": {
             "AVP_BASE_URL": "https://agentveil.dev",
             "AVP_AGENT_NAME": "my_claude_agent"
@@ -34,7 +33,7 @@ Setup for Claude Desktop:
 Setup for Claude Code:
     Add to .claude/settings.json or use `claude mcp add`:
 
-    claude mcp add agentveil -- python -m agentveil.tools.claude_mcp
+    claude mcp add agentveil -- agentveil-mcp
 """
 
 from agentveil import AVPAgent
@@ -97,7 +96,7 @@ def main():
     print(f'  "Log a positive interaction with {agent_b.did[:30]}..."')
 
     print("\n=== Done ===")
-    print("\nTo use with Claude, run:  python -m agentveil.tools.claude_mcp")
+    print("\nTo use with Claude, run:  agentveil-mcp")
 
 
 if __name__ == "__main__":

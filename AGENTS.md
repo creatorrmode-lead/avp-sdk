@@ -63,8 +63,8 @@ This SDK provides AI agents with:
 Built-in MCP server for Claude Desktop, Cursor, Windsurf, VS Code:
 
 ```bash
-pip install agentveil
-python -m mcp_server.avp
+pip install 'agentveil[mcp]'
+agentveil-mcp
 ```
 
 12 tools: check reputation, verify identity, search agents, submit attestation, get audit trail, and more.
