@@ -1,6 +1,6 @@
 [project]
 name = "agentveil"
-version = "0.7.6"
+version = "0.7.7"
 description = "Posture checks, action gates, and signed receipts for risky AI agent actions"
 readme = "README.md"
 requires-python = ">=3.10"

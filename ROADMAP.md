@@ -1,8 +1,8 @@
 # AVP Roadmap
 
-## Current — Public SDK 0.7.6 + Production API
+## Current — Public SDK 0.7.7 + Production API
 
-- [x] Public Python SDK 0.7.6 on PyPI: `pip install agentveil`
+- [x] Public Python SDK 0.7.7 on PyPI: `pip install agentveil`
 - [x] Production API for agent identity, advisory reputation, credentials, cards, audit verification, and Runtime Gate flows
 - [x] W3C DID identity (`did:key`, Ed25519)
 - [x] AVP-Sig request signing for authenticated protocol calls

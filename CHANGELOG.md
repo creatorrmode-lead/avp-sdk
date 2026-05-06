@@ -2,6 +2,26 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.7.7] — 2026-05-06
+
+### Changed
+- Aligned public API docs, security notes, roadmap, skill instructions, and
+  examples around AgentVeil action control: Runtime Gate, signed receipts,
+  advisory reputation APIs, and MCP profile/audit surfaces.
+- Updated MCP server instructions and Docker entrypoints to use the
+  `agentveil-mcp` console command and clarify the SDK Runtime Gate path for
+  risky action execution.
+- Updated the quickstart and wheel verification examples to run against the
+  current package metadata without requiring a live backend.
+- Replaced the default DelegationReceipt purpose text with neutral
+  controlled-action wording.
+- Made the PyPI publish workflow idempotent when artifacts already exist.
+
+### Validation
+- `PYTHONPATH=. pytest tests/test_delegation_issuance.py tests/test_controlled_action.py -q`
+  passed.
+- `PYTHONPATH=. python3 examples/quickstart.py` passed.
+
 ## [0.7.6] — 2026-05-06
 
 ### Changed
