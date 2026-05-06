@@ -21,10 +21,12 @@ pip install agentveil
 > **Paper:** Boiko, O. (2026). *[Why AI Agent Reputation Needs Both Link Analysis and Flow-Based Gating](https://zenodo.org/records/19730525)*. Zenodo.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="AVP SDK Demo — trust check, action, signal change, alert, offline proof" width="720">
+  <img src="docs/demo.gif" alt="AgentVeil SDK demo — preflight, runtime gate, approval, controlled execution, offline proof" width="720">
 </p>
 
-> **Full end-to-end walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — annotated example of the complete arc: trust check → delegation → signal change → alert → offline-verifiable proof. Requires a local AVP backend.
+> **Visual overview:** preflight → runtime gate → approval → controlled execution → offline proof.
+>
+> **Proof Pack walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — annotated local-backend proof flow for trust checks, delegation, signal changes, alerts, and offline-verifiable audit evidence.
 
 ```python
 from agentveil import AVPAgent
