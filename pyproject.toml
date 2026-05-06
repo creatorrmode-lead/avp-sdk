@@ -1,6 +1,6 @@
 [project]
 name = "agentveil"
-version = "0.7.7"
+version = "0.7.8"
 description = "Posture checks, action gates, and signed receipts for risky AI agent actions"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,6 +24,7 @@ dependencies = [
     "pynacl>=1.5.0",
     "base58>=2.1.0",
     "jcs>=0.2.1",
+    "mcp>=1.0.0",
 ]
 
 [project.urls]

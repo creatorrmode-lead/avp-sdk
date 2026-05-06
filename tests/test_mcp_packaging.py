@@ -162,6 +162,13 @@ def test_console_script_entrypoint(pyproject):
     )
 
 
+def test_mcp_runtime_dependency_present_for_console_script(pyproject):
+    dependencies = pyproject["project"].get("dependencies", [])
+    assert any(req.startswith("mcp") for req in dependencies), (
+        "agentveil-mcp is installed by default, so the mcp runtime must be a base dependency"
+    )
+
+
 def test_mcp_optional_dependency_present(pyproject):
     extras = pyproject["project"].get("optional-dependencies", {})
     assert "mcp" in extras, "[project.optional-dependencies].mcp missing"
