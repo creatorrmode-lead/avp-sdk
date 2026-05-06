@@ -8,8 +8,8 @@ These tests verify the local-first foundation laid in Slice 1:
 - the README files agree on canonical vs deprecated terminology.
 
 They do NOT start the MCP server, do NOT make network calls, and do NOT
-install the package into the environment. If the optional `mcp` runtime is
-not installed, tests that need to import the server module are skipped.
+install the package into the environment. If the `mcp` runtime is not
+installed, tests that need to import the server module are skipped.
 """
 
 from __future__ import annotations
@@ -31,10 +31,11 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 CANONICAL_README = REPO_ROOT / "agentveil_mcp" / "README.md"
 TOP_README = REPO_ROOT / "README.md"
+MCP_DOCKERFILE = REPO_ROOT / "mcp_server" / "Dockerfile"
 
 
 def _mcp_runtime_available() -> bool:
-    """True iff the optional `mcp` runtime (installed via [mcp] extra) is importable."""
+    """True iff the `mcp` runtime is importable."""
     try:
         import mcp.server.fastmcp  # noqa: F401
         return True
@@ -225,3 +226,9 @@ def test_top_readme_uses_extras_install_form():
             assert "pip install agentveil mcp" not in line, (
                 f"regression: two-package install form in: {line.strip()}"
             )
+
+
+def test_mcp_dockerfile_uses_extras_install_form():
+    text = MCP_DOCKERFILE.read_text()
+    assert "pip install --no-cache-dir 'agentveil[mcp]' httpx" in text
+    assert "pip install --no-cache-dir agentveil mcp" not in text
