@@ -87,13 +87,13 @@ def _build_transport_security() -> TransportSecuritySettings:
 mcp = FastMCP(
     "Agent Veil Protocol",
     instructions=(
-        "Agent Veil Protocol (AVP) is the trust and reputation layer for autonomous AI agents. "
-        "Use these tools to check whether an agent is trustworthy before delegating tasks, "
-        "submit peer ratings after interactions, register new agents with cryptographic identity, "
-        "discover agents by capability, and verify the integrity of the audit trail. "
-        "All reputation data is cryptographically signed and tamper-evident. "
-        "Start with 'check_reputation' or 'check_trust' to evaluate an agent, "
-        "then use 'submit_attestation' to record interaction outcomes."
+        "AgentVeil helps AI agents inspect public profiles, make advisory reputation checks, "
+        "verify audit evidence, and record signed interaction outcomes. "
+        "Use read-only tools to inspect agent reputation, public profiles, audit history, "
+        "and protocol stats. Use write tools only when a local AgentVeil identity is configured. "
+        "For risky action execution, use the Python SDK Runtime Gate flow "
+        "(`integration_preflight`, `controlled_action`, and signed receipts); "
+        "the MCP server currently exposes advisory and audit tools."
     ),
     transport_security=_build_transport_security(),
 )
@@ -583,10 +583,10 @@ def get_my_agent_info() -> str:
 
 @mcp.resource("avp://protocol/info")
 def protocol_info() -> str:
-    """Information about Agent Veil Protocol — trust layer for AI agents."""
+    """Information about AgentVeil action-control and advisory MCP tools."""
     return json.dumps({
         "name": "Agent Veil Protocol (AVP)",
-        "description": "Trust enforcement layer for autonomous AI agents",
+        "description": "Agent profile inspection, advisory reputation, audit verification, and signed evidence for AI agent systems",
         "api": f"{BASE_URL}/docs",
         "explorer": f"{BASE_URL}/live",       # Deprecated alias; kept for compatibility.
         "live_network": f"{BASE_URL}/live",
@@ -594,12 +594,12 @@ def protocol_info() -> str:
         "github": "https://github.com/agentveil-protocol/avp-sdk",
         "features": [
             "W3C DID Identity (Ed25519)",
-            "Peer Reputation (attestation-based scoring)",
-            "Trust Decisions (can_trust advisory endpoint)",
-            "Offline Credentials (Ed25519-signed, TTL-based)",
-            "Agent Discovery (capability cards + search)",
-            "Sybil Resistance (multi-layer graph analysis)",
-            "Immutable Audit Trail (SHA-256 hash chain)",
+            "Agent profile and reputation inspection",
+            "Advisory reputation checks",
+            "Offline-verifiable credentials",
+            "Agent discovery via capability cards",
+            "Audit trail verification",
+            "Signed interaction attestations",
         ],
     }, indent=2)
 
