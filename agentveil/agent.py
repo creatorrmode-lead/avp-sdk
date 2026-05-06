@@ -1589,7 +1589,7 @@ class AVPAgent:
         allowed_categories: list[str],
         valid_for: timedelta,
         max_spend: Optional[dict[str, Any]] = None,
-        purpose: str = "Guided pilot delegation",
+        purpose: str = "Controlled-action delegation",
         **unsupported_scope_kwargs: Any,
     ) -> dict[str, Any]:
         """
