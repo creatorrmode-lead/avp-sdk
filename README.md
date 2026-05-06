@@ -4,9 +4,9 @@
 [![Python](https://img.shields.io/pypi/pyversions/agentveil)](https://pypi.org/project/agentveil/)
 [![Tests](https://github.com/agentveil-protocol/avp-sdk/actions/workflows/tests.yml/badge.svg)](https://github.com/agentveil-protocol/avp-sdk/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[Listed on Glama MCP Directory](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
+[Glama MCP Directory](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
 
-AgentVeil Protocol helps teams control risky AI agent actions: check posture before runtime, gate execution, and prove what happened with signed receipts.
+AgentVeil helps teams control risky AI agent actions: check posture before runtime, gate execution, and prove what happened with signed receipts.
 
 ```bash
 pip install agentveil
@@ -14,9 +14,9 @@ pip install agentveil
 
 **PyPI**: [agentveil](https://pypi.org/project/agentveil/) | **API**: [agentveil.dev](https://agentveil.dev) | **Network**: [Live Network](https://agentveil.dev/live)
 
-> [Why agent trust infrastructure matters](docs/SECURITY_CONTEXT.md) — verified CVEs, market data, and the structural problem AVP addresses.
+> [Why agent trust infrastructure matters](docs/SECURITY_CONTEXT.md) — verified CVEs, market data, and the structural problem AgentVeil addresses.
 
-> **[AVPProvider merged into Microsoft Agent Governance Toolkit (PR #1010).](https://github.com/microsoft/agent-governance-toolkit/pull/1010)**
+> **[AVPProvider merged into Microsoft Agent Governance Toolkit (PR #1010).](https://github.com/microsoft/agent-governance-toolkit/pull/1010)** AgentVeil is available as an external trust provider for Microsoft AGT / AgentMesh.
 
 > **Paper:** Boiko, O. (2026). *[Why AI Agent Reputation Needs Both Link Analysis and Flow-Based Gating](https://zenodo.org/records/19730525)*. Zenodo.
 
@@ -26,18 +26,18 @@ pip install agentveil
 
 > **Visual overview:** preflight → runtime gate → approval → controlled execution → offline proof.
 >
-> **Proof Pack walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — annotated local-backend proof flow for trust checks, delegation, signal changes, alerts, and offline-verifiable audit evidence.
+> **Proof Pack walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — annotated local-backend reputation evidence flow: score recompute → trust-check deny → webhook alert → audit chain verification.
+>
+> **Controlled-action proof packets:** Runtime Gate flows can export signed proof packets with `agent.build_proof_packet(...)`; see [Customer Integration](docs/CUSTOMER_INTEGRATION.md).
 
 ```python
 from agentveil import AVPAgent
 
-agent = AVPAgent.load("https://agentveil.dev", "my-agent")
+agent = AVPAgent.create(mock=True, name="demo-agent")  # real crypto, mocked HTTP — no server needed
+agent.register(display_name="Demo Agent")
 
-# Should I trust this agent with my task?
-decision = agent.can_trust("did:key:z6Mk...", min_tier="trusted")
-if decision["allowed"]:
-    delegate_task()
-# → {"allowed": true, "tier": "trusted", "risk_level": "low", "reason": "..."}
+rep = agent.get_reputation()
+print(rep["score"], rep["interpretation"])
 ```
 
 ---
@@ -50,36 +50,47 @@ pip install agentveil
 
 ## Quick Start
 
-### Trust decision — one call
+### Run locally — no server required
+
+```python
+from agentveil import AVPAgent
+
+agent = AVPAgent.create(mock=True, name="demo-agent")  # real crypto, mocked HTTP — no server needed
+agent.register(display_name="Test Agent")
+
+rep = agent.get_reputation()
+
+print("did:", rep["did"])
+print("score:", rep["score"])
+print("interpretation:", rep["interpretation"])
+```
+
+For production identity, Runtime Gate, approvals, and signed receipts, see [Customer Integration](docs/CUSTOMER_INTEGRATION.md).
+
+### Production integration shape
 
 ```python
 from agentveil import AVPAgent
 
 agent = AVPAgent.load("https://agentveil.dev", "my-agent")
-decision = agent.can_trust("did:key:z6Mk...", min_tier="trusted")
-print(decision["allowed"], decision["reason"])
-```
 
-### Auto-track with decorator
+report = agent.integration_preflight()
+if not report.ready:
+    raise RuntimeError(report.next_action)
 
-```python
-from agentveil import avp_tracked
+outcome = agent.controlled_action(
+    action="deploy.release",
+    resource="service:critical-workflow",
+    environment="production",
+    delegation_receipt=delegation_receipt,  # issued by the workflow owner
+)
 
-@avp_tracked("https://agentveil.dev", name="reviewer", to_did="did:key:z6Mk...")
-def review_code(pr_url: str) -> str:
-    return analysis
-
-# Success → positive attestation | Exception → negative attestation
-# First call → auto-registers agent + publishes card
-```
-
-### Try without a server
-
-```python
-agent = AVPAgent.create(mock=True, name="test_agent")
-agent.register(display_name="Test Agent")
-rep = agent.get_reputation()
-print(rep)  # Works offline — real crypto, mocked HTTP
+if outcome.status == "approval_required":
+    wait_for_principal_approval(outcome.approval_id)
+elif outcome.status == "executed":
+    store(outcome.receipt_jcs)
+elif outcome.status == "blocked":
+    raise RuntimeError(outcome.reason)
 ```
 
 ### Verify trust offline — no SDK required
@@ -89,7 +100,7 @@ print(rep)  # Works offline — real crypto, mocked HTTP
 curl https://agentveil.dev/v1/reputation/{agent_did}/credential?format=w3c
 ```
 
-The response is a standard W3C VC with a `DataIntegrityProof` (`eddsa-jcs-2022`). Verify it with any VC library — Veramo, SpruceID, Digital Bazaar, or your own Ed25519 implementation. No AVP SDK needed.
+The response is a standard W3C VC with a `DataIntegrityProof` (`eddsa-jcs-2022`). Verify it with any VC library — Veramo, SpruceID, Digital Bazaar, or your own Ed25519 implementation. No AgentVeil SDK needed.
 
 ```python
 # Or verify with the SDK:
@@ -99,36 +110,58 @@ assert AVPAgent.verify_w3c_credential(cred)  # offline, no API call
 
 ---
 
+## Reputation & Trust APIs (reference)
+
+For advisory selection and existing integrations, the SDK also includes:
+
+- `can_trust(...)` — advisory score, tier, risk, and explanation before delegation
+- `@avp_tracked(...)` — decorator for auto-registering and attesting local work
+- Framework tools such as `AVPReputationTool`, `avp_should_delegate(...)`, and `avp_tool_definitions()`
+
+```python
+from agentveil import AVPAgent, avp_tracked
+
+agent = AVPAgent.load("https://agentveil.dev", "my-agent")
+decision = agent.can_trust("did:key:z6Mk...", min_tier="trusted")
+print(decision["allowed"], decision["reason"])
+
+@avp_tracked("https://agentveil.dev", name="reviewer", to_did="did:key:z6Mk...")
+def review_code(pr_url: str) -> str:
+    return analysis
+```
+
+---
+
 ## Features
 
-- **Trust Check** — `can_trust()` — one-call advisory trust decision: score + tier + risk + explanation
-- **W3C VC v2.0 Credentials** — Trust credentials are W3C Verifiable Credentials compliant (`eddsa-jcs-2022` Data Integrity proof). Verify offline with any standard VC library, no AVP SDK required
-- **One-Line Decorator** — `@avp_tracked()` — auto-register, auto-attest, auto-protect
-- **DID Identity** — W3C `did:key` (Ed25519). Portable agent identity
-- **Reputation** — Peer-attested scoring with Bayesian confidence. Sybil-resistant
-- **Attestations** — Signed peer-to-peer ratings. Negative ratings require SHA-256 evidence. Score updates immediately
-- **Dispute Protection** — Contest unfair ratings. Auto-assigned arbitrator from verified pool
-- **Agent Discovery** — Publish capabilities, find agents by skill and reputation
-- **Webhook Alerts** — Push notifications on score drops ([setup guide](docs/WEBHOOKS.md))
-- **Sybil Resistance** — Multi-layer graph analysis blocks fake agent rings
-- **Trust Gate** — Reputation-based rate limiting (newcomer → basic → trusted → elite)
+- **Posture Checks** — inspect agent identity, status (active/suspended), and reputation signals before runtime
+- **Runtime Gate** — evaluate risky actions before execution and return allow / approval required / block
+- **Signed Receipts** — keep tamper-evident proof for gate decisions, approvals, and execution
+- **W3C VC v2.0 Credentials** — export offline-verifiable credentials with `eddsa-jcs-2022` Data Integrity proofs
+- **DID Identity** — W3C `did:key` with Ed25519 keys for portable agent identity
+- **Reputation Signals** — peer attestations, confidence scoring, and advisory trust checks
+- **Agent Discovery** — publish capability cards and find agents by skill and reputation
+- **Webhook Alerts** — score-change notifications to any HTTP endpoint ([setup guide](docs/WEBHOOKS.md))
+- **Dispute & Review Support** — attach evidence and review contested attestations
+- **Framework Integrations** — SDK tools for CrewAI, LangGraph, AutoGen, OpenAI, Claude MCP, Paperclip, and more
 
 ---
 
 ## Integrations
 
-| Framework | Install | Quick Start |
-|-----------|---------|-------------|
-| **Any Python** | `pip install agentveil` | `@avp_tracked()` or `AVPAgent` directly |
-| **CrewAI** | `pip install agentveil crewai` | `tools=[AVPReputationTool(), AVPDelegationTool()]` |
-| **LangGraph** | `pip install agentveil langgraph` | `ToolNode([avp_check_reputation, avp_should_delegate])` |
-| **AutoGen** | `pip install agentveil autogen-core` | `tools=avp_reputation_tools()` |
-| **OpenAI** | `pip install agentveil openai` | `tools=avp_tool_definitions()` |
-| **Claude** | `pip install 'agentveil[mcp]'` | `agentveil-mcp` — MCP server, [docs](agentveil_mcp/README.md) |
-| **Hermes** | `pip install 'agentveil[mcp]'` | `agentveil-mcp` + agentskills.io skill |
-| **Paperclip** | `pip install agentveil` | `avp_should_delegate()` + `avp_evaluate_team()` |
-| **AWS Bedrock** | `pip install agentveil boto3` | Converse API with AVP trust tools |
-| **AgentMesh (MS AGT)** | `pip install agentmesh-avp` | `TrustEngine(external_providers=[AVPProvider()])` |
+| Stack | Install | Integration surface |
+|-------|---------|---------------------|
+| **Any Python** | `pip install agentveil` | `AVPAgent`, `integration_preflight()`, `controlled_action()`, `build_proof_packet()` |
+| **CrewAI** | `pip install agentveil crewai` | `AVPReputationTool`, `AVPDelegationTool`, `AVPAttestationTool` |
+| **LangGraph** | `pip install agentveil langgraph` | `ToolNode([avp_check_reputation, avp_should_delegate, avp_log_interaction])` |
+| **AutoGen** | `pip install agentveil autogen-core` | `avp_reputation_tools()` |
+| **OpenAI** | `pip install agentveil openai` | `avp_tool_definitions()` + `handle_avp_tool_call(...)` from `agentveil.tools.openai` |
+| **MCP clients** | `pip install 'agentveil[mcp]'` | `agentveil-mcp` for Claude Desktop, Cursor, Windsurf, and VS Code ([docs](agentveil_mcp/README.md)) |
+| **Gemini** | `pip install agentveil google-generativeai` | Function-calling example: [`examples/gemini_example.py`](examples/gemini_example.py) |
+| **PydanticAI** | `pip install agentveil pydantic-ai` | Tool example: [`examples/pydantic_ai_example.py`](examples/pydantic_ai_example.py) |
+| **Paperclip** | `pip install agentveil` | `avp_should_delegate(...)`, `avp_evaluate_team(...)`, `avp_plugin_tools()` |
+| **AWS Bedrock** | `pip install agentveil boto3` | Converse API example: [`examples/aws_bedrock.py`](examples/aws_bedrock.py) |
+| **Microsoft AGT / AgentMesh** | `pip install agentmesh-avp` | `AVPProvider` package for Agent Governance Toolkit / AgentMesh integration |
 
 Full integration guides: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
 
@@ -154,9 +187,9 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 ## Security
 
 - Ed25519 signature authentication with nonce anti-replay
-- Input validation — injection detection, PII scanning
-- Agent suspension — compromised agents instantly blocked
-- Audit trail — SHA-256 hash-chained log, anchored to IPFS
+- Input validation for signed SDK/API requests
+- Agent status checks for active, suspended, revoked, or migrated identities
+- Audit trail — SHA-256 hash-chained events with optional IPFS anchoring for published proof artifacts
 
 ---
 
@@ -168,7 +201,7 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 | [Customer Integration](docs/CUSTOMER_INTEGRATION.md) | Controlled-action flow, secrets, errors, and compliance evidence |
 | [Integrations](docs/INTEGRATIONS.md) | Framework-specific setup guides |
 | [Webhook Alerts](docs/WEBHOOKS.md) | Push notification setup |
-| [Protocol Spec](docs/PROTOCOL.md) | Wire format and authentication |
+| [Protocol Spec](docs/PROTOCOL.md) | AgentVeil wire format and authentication |
 | [Security Context](docs/SECURITY_CONTEXT.md) | Why agent trust matters — CVEs and market data |
 | [Changelog](CHANGELOG.md) | Version history |
 
@@ -178,7 +211,7 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 
 | Example | Description |
 |---------|-------------|
-| [`proof_pack/`](examples/proof_pack/) | **End-to-end walkthrough** — trust check → delegation → signal change → alert → offline-verifiable proof. Local backend required. |
+| [`proof_pack/`](examples/proof_pack/) | **Evidence walkthrough** — score recompute → trust-check deny → webhook alert → audit chain verification. Local backend required. |
 | [`standalone_demo.py`](examples/standalone_demo.py) | No server needed — full SDK demo with mock mode |
 | [`quickstart.py`](examples/quickstart.py) | Register, publish card, check reputation |
 | [`two_agents.py`](examples/two_agents.py) | Full A2A interaction with attestations |

@@ -2,6 +2,30 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.7.6] — 2026-05-06
+
+### Changed
+- Reframed the public README around AgentVeil action control: local smoke test,
+  production integration shape, Runtime Gate, approvals, signed receipts, and
+  controlled-action proof packets.
+- Moved advisory reputation APIs into a dedicated reference section while
+  keeping existing `can_trust(...)`, `@avp_tracked(...)`, and framework tool
+  documentation discoverable.
+- Updated Features, Security, Proof Pack, and Integrations copy to reduce
+  overclaims and match the current SDK/API surface.
+- Added Gemini and PydanticAI examples to the integrations table.
+- Updated PyPI metadata keywords for action-control, runtime-gate,
+  controlled-actions, and signed-receipts positioning.
+- Clarified the Microsoft Agent Governance Toolkit / AgentMesh integration and
+  softened the Glama directory label while retaining the verified listing.
+
+### Validation
+- README local/mock snippets pass from a clean editable install.
+- Markdown/link sanity checks passed for README tables, fences, and local docs
+  links.
+- `agentmesh-avp==0.1.1` verified to export `AVPProvider`; README avoids an
+  unverified `TrustEngine(...)` constructor claim.
+
 ## [0.7.5] — 2026-05-05
 
 ### Changed
