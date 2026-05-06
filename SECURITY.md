@@ -27,8 +27,9 @@ We will acknowledge receipt within **48 hours** and aim to provide an initial as
 - **Ed25519 signatures** on all authenticated requests
 - **Nonce + timestamp** replay protection
 - **Input validation** — injection detection on all fields (prompt injection, XSS, SQL injection)
-- **PII scanning** — credentials and sensitive data blocked before storage
-- **Audit trail** — SHA-256 hash-chained logs anchored to IPFS
+- **Sensitive-data hygiene** — callers should not send private keys, cloud credentials, raw private logs, or secrets to AgentVeil
+- **Audit trail** — SHA-256 hash-chained records, with optional IPFS anchoring for published proof artifacts
+- **Runtime evidence** — signed DecisionReceipt, HumanApprovalReceipt, and ExecutionReceipt artifacts for controlled-action workflows
 - **Key storage** — local keys saved with `chmod 0600` permissions
 
 ## Cryptographic Identity

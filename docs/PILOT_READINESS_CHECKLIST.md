@@ -1,8 +1,8 @@
 # Pilot Readiness Checklist
 
 This checklist is for the first guided customer integration using
-the production AVP API. It is a pilot operating checklist, not a self-service
-onboarding promise.
+the production AVP API. It is an operating checklist for one controlled-action
+rollout.
 
 ## Scope
 
@@ -12,7 +12,7 @@ scope.
 
 Out of scope for this pilot checklist:
 
-- fully self-service onboarding
+- unattended onboarding without principal or workflow setup
 - automatic DelegationReceipt issuance
 - dashboard or inbox workflows
 - production deploy, SDK release, tag, or PyPI publish
@@ -33,7 +33,7 @@ Out of scope for this pilot checklist:
 - Install the pinned SDK:
 
   ```bash
-  python -m pip install agentveil==0.7.5
+  python -m pip install agentveil==0.7.6
   ```
 
 - Create or load the local agent identity.
@@ -86,7 +86,7 @@ customer's DelegationReceipt is valid for a specific action.
 
 Confirm the customer environment is using the current signed-query path.
 
-- SDK must be `agentveil==0.7.5` or a later release containing the documented
+- SDK must be `agentveil==0.7.6` or a later release containing the documented
   signed-query and onboarding challenge helper behavior.
 - Signed requests with query parameters must use AVP-Sig v2.
 - AVP-Sig v1 remains valid only for signed requests without query parameters.
@@ -239,7 +239,7 @@ Current signed receipt schemas:
 
 The pilot is ready for the first customer-controlled action when:
 
-- SDK install is pinned to `agentveil==0.7.5` or a later release containing
+- SDK install is pinned to `agentveil==0.7.6` or a later release containing
   the documented signed-query and onboarding challenge helper behavior;
 - local identity is created or loaded securely;
 - DID registration and verification state are acceptable;
@@ -250,8 +250,8 @@ The pilot is ready for the first customer-controlled action when:
 - `executed`, `approval_required`, and `blocked` paths are handled;
 - proof artifact storage is defined before execution.
 
-Do not treat the pilot as self-service ready if any step requires operator
-interpretation or manual backend intervention.
+Do not treat the workflow as ready for unattended rollout if any step requires
+operator interpretation or manual backend intervention.
 
 ## Current Limitations
 

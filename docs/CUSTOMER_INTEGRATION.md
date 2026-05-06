@@ -118,7 +118,7 @@ if result.status == "executed":
     receipt_jcs = result.receipt_jcs      # exact signed proof artifact
     receipt = result.receipt              # parsed convenience view
 elif result.status == "approval_required":
-    approval_id = result.approval["id"]
+    approval_id = result.approval_id
 elif result.status == "blocked":
     reason = result.reason
 ```

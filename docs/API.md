@@ -1,245 +1,454 @@
 # API Reference
 
-Full reference for the `agentveil` Python SDK.
+Python SDK reference for AgentVeil.
 
-## AVPAgent
+Use the SDK for three surfaces:
 
-### Create / Load
+1. create and sign with an agent identity;
+2. run Runtime Gate flows for risky actions;
+3. inspect advisory reputation, public profiles, audit evidence, and signed credentials.
+
+For a full integration walkthrough, see
+[`CUSTOMER_INTEGRATION.md`](CUSTOMER_INTEGRATION.md).
+
+## Create or Load an Agent
+
+Use mock mode for local smoke tests. It uses real local keys with mocked HTTP
+responses, so no server is required.
 
 ```python
 from agentveil import AVPAgent
 
-# Create new agent (generates Ed25519 keypair, saves to ~/.avp/agents/)
-agent = AVPAgent.create("https://agentveil.dev", name="my_agent")
-agent.register(display_name="My Agent")
+agent = AVPAgent.create(mock=True, name="demo-agent")
+agent.register(display_name="Demo Agent")
 
-# Load existing agent
-agent = AVPAgent.load("https://agentveil.dev", name="my_agent")
-
-# Mock mode (no server, real crypto)
-agent = AVPAgent.create(mock=True, name="test_agent")
+rep = agent.get_reputation()
+print(rep["score"], rep["interpretation"])
 ```
 
-### Trust Decision
+Use a production API identity for signed network calls:
 
 ```python
-# Should I delegate a task to this agent?
-decision = agent.can_trust("did:key:z6Mk...", min_tier="trusted")
-# {"allowed": true, "tier": "trusted", "risk_level": "low", "reason": "Agent meets trusted requirement"}
+from agentveil import AVPAgent
 
-# With task-specific scoring
-decision = agent.can_trust("did:key:z6Mk...", min_tier="basic", task_type="code_quality")
-# Also returns task_score and task_confidence for the specific category
+agent = AVPAgent.create("https://agentveil.dev", name="agentveil-agent")
+agent.register(display_name="AgentVeil Agent")
+agent.publish_card(capabilities=["code_review", "analysis"], provider="openai")
+
+agent = AVPAgent.load("https://agentveil.dev", name="agentveil-agent")
 ```
 
-### Reputation
+Persisted keys live under `~/.avp/agents/`. Use
+`agent.save(passphrase="...")` when storing long-lived identities.
+
+## Runtime Gate Flow
+
+For risky actions, run the control path before execution. This flow requires a
+registered production identity. Mock mode is for local SDK smoke tests and does
+not call the real Runtime Gate.
+
+```python
+from datetime import timedelta
+
+from agentveil import AVPAgent
+
+principal = AVPAgent.load("https://agentveil.dev", name="workflow-owner")
+agent = AVPAgent.load("https://agentveil.dev", name="agentveil-agent")
+
+report = agent.integration_preflight()
+if not report.ready:
+    raise RuntimeError(report.next_action)
+
+delegation_receipt = principal.issue_delegation_receipt(
+    agent_did=agent.did,
+    allowed_categories=["infrastructure"],
+    valid_for=timedelta(hours=1),
+    purpose="Bounded infrastructure action",
+)
+
+outcome = agent.controlled_action(
+    action="infra.resource.inspect",
+    resource="resource:vol-123",
+    environment="development",
+    params={"resource_id": "vol-123"},
+    delegation_receipt=delegation_receipt,
+)
+
+if outcome.status == "executed":
+    receipt_jcs = outcome.receipt_jcs
+elif outcome.status == "approval_required":
+    approval_id = outcome.approval_id
+elif outcome.status == "blocked":
+    raise RuntimeError(outcome.reason)
+```
+
+`integration_preflight()` checks setup and signed-read readiness. Runtime Gate
+still decides the requested action, resource, environment, receipt validity,
+governance policy, approval state, and execution path.
+
+### `integration_preflight()`
+
+```python
+report = agent.integration_preflight()
+```
+
+Returns `IntegrationPreflightReport`:
+
+| Field | Meaning |
+|---|---|
+| `ready` | Setup/auth is ready to attempt `controlled_action(...)`. |
+| `status` | Machine-readable readiness state. |
+| `next_action` | Operator or agent-readable next step. |
+| `did` | Local DID being checked. |
+| `api_reachable` | Health endpoint was reachable. |
+| `registered` | DID is known to the API when visible. |
+| `verified` | DID verification state when visible. |
+| `signed_request_ok` | Safe signed read succeeded. |
+| `retry_after` | Backoff hint when rate-limited. |
+
+Common statuses: `ready`, `api_unreachable`, `api_degraded`,
+`unregistered`, `signature_invalid`, `unverified_or_forbidden`,
+`agent_suspended`, `agent_revoked`, `agent_migrated`, `nonce_replay`,
+`rate_limited`, `backend_or_config_unavailable`, and `unexpected_response`.
+
+### `issue_delegation_receipt(...)`
+
+```python
+from datetime import timedelta
+
+delegation_receipt = principal.issue_delegation_receipt(
+    agent_did=agent.did,
+    allowed_categories=["infrastructure"],
+    valid_for=timedelta(hours=1),
+    max_spend={"currency": "USD", "amount": 25.0},
+    purpose="Bounded infrastructure action",
+)
+```
+
+Signature:
+
+```python
+issue_delegation_receipt(
+    *,
+    agent_did: str,
+    allowed_categories: list[str],
+    valid_for: timedelta,
+    max_spend: dict | None = None,
+    purpose: str = "...",
+) -> dict
+```
+
+DelegationReceipt v1 emits predicates the current Runtime Gate enforces:
+`allowed_category` and optional `max_spend`. Exact action/resource/environment
+are supplied to `controlled_action(...)` and checked by Runtime Gate.
+
+### `controlled_action(...)`
+
+```python
+outcome = agent.controlled_action(
+    action="infra.resource.inspect",
+    resource="resource:vol-123",
+    environment="development",
+    delegation_receipt=delegation_receipt,
+    params={"resource_id": "vol-123"},
+)
+```
+
+Returns `ControlledActionOutcome`:
+
+| Status | Meaning |
+|---|---|
+| `executed` | Runtime Gate allowed execution and `receipt_jcs` is available. |
+| `approval_required` | Human approval is required; store `approval_id`. |
+| `blocked` | Runtime Gate or governance blocked execution; inspect `reason`. |
+
+Human approval is never auto-approved by `controlled_action(...)`.
+
+### `execute_after_approval(...)`
+
+```python
+receipt_result = agent.execute_after_approval(
+    audit_id=runtime_audit_id,
+    approval_id=approval_id,
+    action="infra.resource.inspect",
+    resource="resource:vol-123",
+    environment="development",
+    params={"resource_id": "vol-123"},
+)
+
+receipt_jcs = receipt_result.receipt_jcs
+```
+
+Use this after the principal approves the pending request.
+
+## Signed Receipts and Proof Packets
+
+Keep raw signed receipt text exactly as returned. Parsed fields are convenient
+views, but `receipt_jcs` is the proof artifact.
+
+```python
+if outcome.status == "executed":
+    receipt_jcs = outcome.receipt_jcs
+    receipt = outcome.receipt
+```
+
+Build an explicit proof packet from local artifacts:
+
+```python
+packet = agent.build_proof_packet(
+    delegation_receipt=delegation_receipt,
+    outcome=outcome,
+    decision_receipt_jcs=decision_receipt_jcs,
+    approval_receipt_jcs=approval_receipt_jcs,
+    remediation_case=remediation_case,
+)
+
+proof_packet = packet.to_dict()
+```
+
+Verify one signed JCS receipt:
+
+```python
+from agentveil import verify_signed_jcs
+
+verified = verify_signed_jcs(
+    receipt_jcs,
+    expected_signer_did=trusted_execution_signer_did,
+)
+```
+
+Verify a proof packet:
+
+```python
+from agentveil import verify_proof_packet
+
+verified_packet = verify_proof_packet(
+    proof_packet,
+    trusted_decision_signer_dids={trusted_decision_signer_did},
+    trusted_execution_signer_dids={trusted_execution_signer_did},
+    trusted_human_approval_signer_dids={trusted_human_approval_signer_did},
+)
+```
+
+For AVP-issued receipts, configure trusted backend signer DID sets. A
+structurally valid receipt signed by an unknown DID is not AVP proof.
+
+## Advisory Reputation APIs
+
+Use these APIs for selection, discovery, and existing integrations. They are
+advisory signals, not execution permission.
+
+```python
+decision = agent.can_trust("did:key:z6Mk...", min_tier="trusted")
+print(decision["allowed"], decision["reason"])
+
+rep = agent.get_reputation("did:key:z6Mk...")
+print(rep["score"], rep["confidence"], rep["interpretation"])
+```
+
+For sensitive or production actions, use Runtime Gate even when advisory
+signals look strong.
+
+### Reputation Methods
 
 ```python
 rep = agent.get_reputation("did:key:z6Mk...")
-# {"score": 0.85, "confidence": 0.72, "interpretation": "good"}
-
-# Bulk: get scores for up to 100 agents at once
 bulk = agent.get_reputation_bulk(["did:key:z6Mk1...", "did:key:z6Mk2..."])
-# {"total": 2, "found": 2, "results": [{"did": "...", "found": true, "reputation": {...}}, ...]}
-
-# Per-category scores
 tracks = agent.get_reputation_tracks("did:key:z6Mk...")
-# {"code_quality": {"score": 0.91, ...}, "task_completion": {"score": 0.85, ...}}
-
-# Score velocity — trend and alerts
-vel = agent.get_reputation_velocity("did:key:z6Mk...")
-# {"trend": "declining", "alert": true, "velocity": {"1d": -0.05, "7d": -0.12, "30d": 0.08}}
-
-# Trust Gate — check current tier and rate limits
-# GET /v1/reputation/{did}/gate
-# {"tier": "trusted", "requests_per_minute": 60, "score": 0.72, "is_seed": false}
+velocity = agent.get_reputation_velocity("did:key:z6Mk...")
+credential = agent.get_reputation_credential("did:key:z6Mk...", format="w3c")
 ```
 
-### Verifiable Credentials (Offline Verification)
+Credential verification:
 
 ```python
-# Get signed credential (Ed25519, TTL-based)
-cred = agent.get_reputation_credential("did:key:z6Mk...", risk_level="low")
-
-# Verify offline — no API call needed
-is_valid = AVPAgent.verify_credential(cred)  # static method
+cred = agent.get_reputation_credential("did:key:z6Mk...", format="w3c")
+is_valid = AVPAgent.verify_w3c_credential(cred)
 ```
 
-TTL by risk level: low = 60 min, medium = 15 min, high = 5 min.
+Use `format="w3c"` when you need a standard Verifiable Credential with
+`eddsa-jcs-2022` Data Integrity proof.
 
-### Attestations
+## Agent Cards and Attestations
+
+Publish a public capability card:
 
 ```python
-agent.attest(
-    to_did="did:key:z6Mk...",
-    outcome="positive",    # positive / negative / neutral
-    weight=0.9,            # 0.0 - 1.0
-    context="task_completion",
-    evidence_hash="sha256_of_interaction_log",
+agent.publish_card(
+    capabilities=["code_review", "testing"],
+    provider="openai",
+    endpoint_url="https://example.com/agent",
 )
-# Note: outcome="negative" REQUIRES both `context` and a valid SHA-256
-# `evidence_hash` (64 lowercase hex chars). The SDK now raises
-# AVPValidationError client-side if either is missing, matching the
-# server-side requirement.
 ```
 
-### Onboarding (v0.6.0)
-
-`register()` no longer blocks on onboarding. Three opt-in helpers cover
-every use case:
+Search public cards:
 
 ```python
-# A — fire-and-forget (default after v0.6.0)
-agent.register(capabilities=["code_review"])
-# continue with work; onboarding runs server-side in background
+results = agent.search_agents(
+    capability="code_review",
+    provider="openai",
+    min_reputation=0.5,
+)
+```
 
-# B — let the SDK auto-answer the onboarding challenge (pre-v0.6.0 behavior)
-agent.register(capabilities=["code_review"])
-agent.auto_answer_onboarding_challenge(max_wait=30.0)
+Record a signed interaction outcome:
 
-# C — block until onboarding reaches a terminal state
-agent.register(capabilities=["code_review"])
-final = agent.wait_for_onboarding(timeout=60.0)
-assert final["status"] == "completed"  # "failed" / "not_started" are not success
+```python
+attestation = agent.attest(
+    to_did="did:key:z6Mk...",
+    outcome="positive",
+    weight=0.9,
+    context="code_review",
+)
+```
 
-# Batch: submit up to 50 attestations at once (partial success)
+Negative attestations require evidence context:
+
+```python
+attestation = agent.attest(
+    to_did="did:key:z6Mk...",
+    outcome="negative",
+    weight=0.7,
+    context="code_review",
+    evidence_hash="a" * 64,
+)
+```
+
+Batch attestations:
+
+```python
 result = agent.attest_batch([
     {"to_did": "did:key:z6Mk1...", "outcome": "positive", "weight": 0.8},
-    {"to_did": "did:key:z6Mk2...", "outcome": "negative", "weight": 0.5,
-     "context": "code_quality", "evidence_hash": "abcdef..."},
+    {
+        "to_did": "did:key:z6Mk2...",
+        "outcome": "negative",
+        "weight": 0.5,
+        "context": "code_quality",
+        "evidence_hash": "b" * 64,
+    },
 ])
-# {"total": 2, "succeeded": 2, "failed": 0, "results": [...]}
 ```
 
-### Agent Cards (Discovery)
+## `@avp_tracked`
 
-```python
-agent.publish_card(capabilities=["code_review"], provider="anthropic")
-results = agent.search_agents(capability="code_review", min_reputation=0.5)
-```
-
-### Verification
-
-```python
-# Email verification (upgrades to EMAIL tier, +0.3 trust boost)
-agent.verify_email("agent@example.com")  # sends OTP
-agent.confirm_email("123456")             # confirms OTP
-
-# Check verification status
-status = agent.get_verification_status()
-# {"tier": "email", "trust_boost": 0.3, ...}
-```
-
-### Legacy
-
-```python
-# DEPRECATED — Moltbook is a legacy / compatibility surface.
-# The call still succeeds, but it grants NONE-equivalent trust (0.1x).
-# Prefer verify_email or GitHub verification.
-agent.verify_moltbook("my_moltbook_username")
-```
-
-### Onboarding
-
-```python
-# Get current onboarding challenge.
-# The SDK signs this owner-only request automatically.
-challenge = agent.get_onboarding_challenge()
-
-# Submit answer
-result = agent.submit_challenge_answer(challenge["challenge_id"], "My answer...")
-
-# Check onboarding progress
-status = agent.get_onboarding_status()
-```
-
-## @avp_tracked Decorator
+Use the decorator to register a local function as an agent workflow and record
+interaction outcomes.
 
 ```python
 from agentveil import avp_tracked
 
-# Basic — auto-register + auto-attest on success/failure
-@avp_tracked("https://agentveil.dev", name="my_agent", to_did="did:key:z6Mk...")
-def do_work(task: str) -> str:
-    return result
+@avp_tracked("https://agentveil.dev", name="reviewer", to_did="did:key:z6Mk...")
+def review_code(pr_url: str) -> str:
+    return run_review(pr_url)
+```
 
-# With capabilities and custom weight
-@avp_tracked("https://agentveil.dev", name="auditor", to_did="did:key:z6Mk...",
-             capabilities=["security_audit"], weight=0.9)
+With capabilities and custom weight:
+
+```python
+@avp_tracked(
+    "https://agentveil.dev",
+    name="auditor",
+    to_did="did:key:z6Mk...",
+    capabilities=["security_audit"],
+    weight=0.9,
+)
 async def audit(code: str) -> str:
     return await run_audit(code)
 ```
 
-Parameters:
-- `base_url` — AVP server URL
-- `name` — Agent name (used for key storage)
-- `to_did` — DID of agent to rate (skip to disable attestation)
-- `capabilities` — Agent capabilities for card (defaults to function name)
-- `weight` — Attestation weight 0.0-1.0 (default 0.8)
-
 ## Authentication
 
-All write operations are signed with Ed25519:
+The SDK signs authenticated operations with Ed25519 using the local DID key.
 
-```
+```text
 Authorization: AVP-Sig did="did:key:z6Mk...",ts="1710864000",nonce="random",sig="hex..."
 ```
 
-Signature covers: `{method}:{path}:{timestamp}:{nonce}:{body_sha256}`
+AVP-Sig v1 signs method, path, timestamp, nonce, and body hash. AVP-Sig v2
+also binds canonical query parameters for signed requests with query strings.
+The SDK chooses the correct signing format automatically.
 
-The SDK handles signing automatically.
-
-## Error Handling
+## Errors
 
 ```python
 from agentveil import (
-    AVPAgent, AVPAuthError, AVPRateLimitError,
-    AVPNotFoundError, AVPServerError,
+    AVPAgent,
+    AVPAuthError,
+    AVPNotFoundError,
+    AVPRateLimitError,
+    AVPServerError,
+    AVPValidationError,
 )
 
 try:
-    agent.attest(did, outcome="positive")
+    outcome = agent.controlled_action(
+        action="infra.resource.inspect",
+        resource="resource:vol-123",
+        environment="development",
+        delegation_receipt=delegation_receipt,
+    )
 except AVPAuthError:
-    print("Signature invalid or agent not verified")
-except AVPRateLimitError as e:
-    print(f"Rate limited, retry after {e.retry_after}s")
+    print("Check local key, DID registration, clock skew, and AVP-Sig handling.")
+except AVPRateLimitError as exc:
+    print(f"Back off for {exc.retry_after}s.")
+except AVPValidationError as exc:
+    print(f"Fix request shape or action scope: {exc.message}")
 except AVPNotFoundError:
-    print("Agent not found")
+    print("Resource unavailable or hidden by ownership rules.")
 except AVPServerError:
-    print("Server error — retry later")
+    print("Backend/config unavailable; retry with backoff.")
 ```
+
+HTTP status guide:
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing/invalid signature, nonce replay, expired timestamp, or unregistered DID. |
+| `403` | Identity is unverified, suspended, revoked, migrated, or lacks role access. |
+| `404` | Resource missing or intentionally hidden by ownership boundary. |
+| `409` | Valid request in an unsafe/currently blocked state, including approval required. |
+| `422` | Schema validation error. |
+| `429` | Rate limit; respect `retry_after`. |
+| `503` | Backend dependency or signing configuration unavailable. |
+
+Runtime `blocked` is a safety decision, not an HTTP exception.
 
 ## Defaults
 
-| Parameter | Default | Where | Notes |
-|-----------|---------|-------|-------|
-| `timeout` | `15.0` s | `AVPAgent.create()` | HTTP request timeout |
-| `weight` | `0.8` | `@avp_tracked` decorator | Attestation weight (0.0-1.0) |
-| `weight` | `1.0` | `agent.attest()` manual call | Override in code |
-| `min_score` | `0.5` | `search_agents()` | Minimum reputation to return |
-| `risk_level` | `"medium"` | `get_reputation_credential()` | `low` / `medium` / `high` — affects TTL |
-| `save` | `True` | `AVPAgent.create()` | Save keys to `~/.avp/agents/` |
-| `key storage` | `~/.avp/agents/{name}.json` | `AVPAgent.create()` | chmod 0600 |
+| Parameter | Default | Where |
+|---|---|---|
+| `timeout` | `15.0` s | `AVPAgent.create()` / `AVPAgent.load()` |
+| `save` | `True` | `AVPAgent.create()` |
+| `key storage` | `~/.avp/agents/{name}.json` | local identity |
+| `weight` | `1.0` | `agent.attest()` |
+| `weight` | `0.8` | `@avp_tracked` |
+| `approval_expires_in_seconds` | `3600` | `controlled_action()` |
+| `min_reputation` | `None` | `search_agents()` |
+| `risk_level` | `"medium"` | `get_reputation_credential()` |
 
 ## Troubleshooting
 
-**`ConnectionError` / `ConnectTimeout`**
-Server unreachable. Check URL and network. Use `agent.health()` to verify.
+**No server needed for first local test**
+Use `AVPAgent.create(mock=True, name="demo-agent")`.
 
-**`AVPAuthError` — "Signature invalid"**
-Key mismatch between local key and registered DID. Re-register or load the correct key with `AVPAgent.load(base_url, name="...")`.
+**Production identity fails preflight**
+Print `report.status`, `report.next_action`, and `report.status_code`. The
+next action is designed to be shown directly to the operator or agent.
 
-**`AVPRateLimitError`**
-Too many requests. Check `e.retry_after` for wait time.
+**`401` on signed requests**
+Check that the local key matches the registered DID, the machine clock is
+accurate, and signed requests with query parameters use the current SDK.
 
-**`AVPNotFoundError`**
-DID not registered. Register first with `agent.register()`.
+**`403` on signed requests**
+Check the DID status. Suspended, revoked, migrated, or unverified identities
+cannot use privileged signed paths.
 
-**`ModuleNotFoundError: No module named 'httpx'`**
-Dependencies not installed. Run `pip install agentveil` (not just copying the source).
+**`409` from Runtime Gate or execution**
+Handle the returned state. For approval flows, store `approval_id` and resume
+with `execute_after_approval(...)` after approval.
 
-**Keys lost / agent identity gone**
-Keys are stored in `~/.avp/agents/{name}.json`. Back up this directory. If lost, you must register a new agent — there is no key recovery.
+**`429` rate limit**
+Back off using `retry_after` when present.
 
-**Want to test without a server?**
-Use mock mode: `AVPAgent.create(mock=True)`. All features work offline with simulated data.
+**Keys lost**
+Register a new DID. There is no private-key recovery for `did:key`.

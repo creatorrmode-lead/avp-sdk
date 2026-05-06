@@ -1,20 +1,17 @@
 """
-Two agents interact: hire, attest, check reputation.
+Two agents interact: discover, attest, check advisory reputation.
 
-Shows the full AVP lifecycle:
+Shows the local two-agent flow:
     1. Both agents register
     2. Agent A searches for Agent B by capability
-    3. Agent A creates escrow (payment hold)
-    4. Agents interact (simulated)
-    5. Agent A attests Agent B positively
-    6. Agent B releases escrow (gets paid)
-    7. Both check reputations
+    3. Agents interact (simulated)
+    4. Agent A attests Agent B positively
+    5. Both check advisory reputation
 
 Usage:
     python examples/two_agents.py
 """
 
-import asyncio
 from agentveil import AVPAgent
 
 AVP_URL = "http://localhost:8000"

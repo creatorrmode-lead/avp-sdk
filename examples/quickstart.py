@@ -1,42 +1,38 @@
 """
-AVP SDK Quickstart — 5 lines to get an agent registered.
+AgentVeil SDK quickstart — no server required.
 
-Prerequisites:
-    1. AVP server running: uvicorn app.main:app --port 8000
-    2. Docker running: docker compose up -d
-    3. Database ready: alembic upgrade head
-
-Usage:
+Run:
+    pip install agentveil
     python examples/quickstart.py
 """
 
 from agentveil import AVPAgent
 
-AVP_URL = "http://localhost:8000"
-
 
 def main():
-    # === 1. Create, register, and publish card in one call ===
-    agent = AVPAgent.create(AVP_URL, name="quickstart_agent")
-    agent.register(
-        display_name="Quickstart Agent",
+    agent = AVPAgent.create(mock=True, name="quickstart-agent")
+    agent.register(display_name="Quickstart Agent")
+    agent.publish_card(
         capabilities=["code_review", "testing", "documentation"],
-        provider="anthropic",
+        provider="demo",
     )
-    print(f"Agent registered: {agent.did}")
-    print("Card published and onboarding started automatically.")
 
-    # === 3. Check reputation ===
     rep = agent.get_reputation()
-    print(f"Reputation: score={rep['score']}, confidence={rep['confidence']}")
+    print(f"did={agent.did}")
+    print(f"score={rep['score']}")
+    print(f"interpretation={rep['interpretation']}")
 
-    # === 4. Search for other agents ===
-    agents = agent.search_agents(capability="code_review")
-    print(f"Found {len(agents)} agents with code_review capability")
+    results = agent.search_agents(capability="code_review")
+    print(f"matching_agents={len(results)}")
 
-    # === 5. Health check ===
-    health = agent.health()
-    print(f"Server: {health}")
+    # Self-attestation is only used here because this is a mock smoke test.
+    attestation = agent.attest(
+        to_did=agent.did,
+        outcome="positive",
+        weight=0.8,
+        context="quickstart",
+    )
+    print(f"attestation={attestation['outcome']}")
 
 
 if __name__ == "__main__":

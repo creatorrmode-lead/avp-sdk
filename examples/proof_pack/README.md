@@ -1,8 +1,8 @@
 # AVP Proof Pack — end-to-end walkthrough
 
-One runnable walkthrough of the full AVP trust lifecycle, against a local AVP backend:
+One runnable local-backend evidence walkthrough for AgentVeil reputation evidence and audit verification:
 
-> **AVP decides whether an agent should act, monitors trust during execution, revokes it on degradation, fires an alert, and leaves a cryptographic audit trail anyone can verify offline.**
+> **The demo shows a real local backend flow: registration → advisory check → Jobs API cycle → negative attestation → score recompute → advisory deny → webhook alert → audit trail verification.**
 
 This is the canonical proof-oriented demo for the SDK. For a quick visual overview, see the GIF at the top of the [main README](../../README.md). For a no-server tour of the SDK API, see [`standalone_demo.py`](../standalone_demo.py).
 

@@ -46,8 +46,15 @@ echo "==> Wheel contents:"
 python -c "import zipfile, sys; [print('    ' + n) for n in sorted(zipfile.ZipFile(sys.argv[1]).namelist())]" "$WHEEL"
 
 echo "==> Wheel entry_points.txt:"
-python -c "import zipfile, sys; print(zipfile.ZipFile(sys.argv[1]).read('agentveil-0.5.7.dist-info/entry_points.txt').decode())" "$WHEEL" \
-    || echo "    (entry_points.txt not found at expected path — version string may have changed)"
+python -c "
+import zipfile, sys
+z = zipfile.ZipFile(sys.argv[1])
+matches = [name for name in z.namelist() if name.endswith('/entry_points.txt')]
+if not matches:
+    raise FileNotFoundError('entry_points.txt not found')
+print(z.read(matches[0]).decode())
+" "$WHEEL" \
+    || echo "    (entry_points.txt not found)"
 
 echo "==> Wheel METADATA (extras):"
 python -c "
