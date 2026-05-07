@@ -439,6 +439,77 @@ class TestRuntimeControlContract:
         assert 'v="2"' in captured["headers"]["Authorization"]
         assert result["ok"] is True
 
+    def test_post_json_retries_rate_limit_with_fresh_signature(self):
+        agent = _make_agent()
+        captured_headers = []
+
+        def response(status_code, json_data, headers=None):
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = status_code
+            resp.headers = headers or {}
+            resp.json.return_value = json_data
+            resp.text = json.dumps(json_data)
+            return resp
+
+        responses = [
+            response(429, {"detail": "slow down"}, {"Retry-After": "0"}),
+            response(200, {"ok": True}),
+        ]
+
+        def mock_post(url, **kwargs):
+            captured_headers.append(kwargs.get("headers"))
+            return responses.pop(0)
+
+        with patch.object(httpx.Client, "post", side_effect=mock_post), \
+             patch("agentveil.agent.time.sleep") as sleep_mock:
+            result = agent._post_json("/v1/example", {"approved": True})
+
+        assert result == {"ok": True}
+        sleep_mock.assert_called_once_with(1.0)
+        assert len(captured_headers) == 2
+        assert captured_headers[0]["Authorization"] != captured_headers[1]["Authorization"]
+
+    def test_search_agents_adds_did_alias_for_agent_did(self):
+        agent = _make_agent()
+
+        def mock_get(url, **kwargs):
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = [
+                {
+                    "agent_did": "did:key:z6MkSearchResult",
+                    "capabilities": ["research"],
+                }
+            ]
+            return resp
+
+        with patch.object(httpx.Client, "get", side_effect=mock_get):
+            results = agent.search_agents(capability="research")
+
+        assert results[0]["agent_did"] == "did:key:z6MkSearchResult"
+        assert results[0]["did"] == "did:key:z6MkSearchResult"
+
+    def test_get_audit_trail_uses_public_audit_endpoint(self):
+        agent = _make_agent()
+        captured = {}
+
+        def mock_get(url, **kwargs):
+            captured["url"] = url
+            captured["params"] = kwargs.get("params")
+            captured["headers"] = kwargs.get("headers")
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = [{"audit_id": "urn:uuid:audit"}]
+            return resp
+
+        with patch.object(httpx.Client, "get", side_effect=mock_get):
+            result = agent.get_audit_trail(limit=25, offset=5)
+
+        assert captured["url"] == f"/v1/audit/{agent.did}"
+        assert captured["params"] == {"limit": 25, "offset": 5}
+        assert captured["headers"] is None
+        assert result == [{"audit_id": "urn:uuid:audit"}]
+
     def test_create_remediation_case_rejects_unknown_reference_field(self):
         agent = _make_agent()
 

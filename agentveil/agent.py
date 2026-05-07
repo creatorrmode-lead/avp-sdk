@@ -15,6 +15,7 @@ Usage:
 import json
 import os
 import logging
+import time
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -88,6 +89,8 @@ class AVPAgent:
         private_key: bytes,
         name: str = "agent",
         timeout: float = 15.0,
+        rate_limit_retries: int = 1,
+        rate_limit_retry_buffer: float = 1.0,
     ):
         """
         Initialize agent with existing private key.
@@ -97,6 +100,8 @@ class AVPAgent:
         self._private_key = private_key
         self._name = name
         self._timeout = timeout
+        self._rate_limit_retries = max(0, rate_limit_retries)
+        self._rate_limit_retry_buffer = max(0.0, rate_limit_retry_buffer)
 
         # Warn if using unencrypted HTTP for non-localhost connections
         if self._base_url.startswith("http://") and "localhost" not in self._base_url and "127.0.0.1" not in self._base_url:
@@ -356,6 +361,24 @@ class AVPAgent:
         self._handle_response(response)
         raise AVPServerError("unreachable response handling state")
 
+    def _request_with_rate_limit_retry(self, send_request) -> httpx.Response:
+        attempts = 0
+        while True:
+            response = send_request()
+            if response.status_code != 429 or attempts >= self._rate_limit_retries:
+                return response
+
+            retry_after = _parse_retry_after(response)
+            sleep_for = max(0, retry_after) + self._rate_limit_retry_buffer
+            log.warning("AVP API rate-limited request; retrying in %.1fs", sleep_for)
+            time.sleep(sleep_for)
+            attempts += 1
+
+    def _get_public_json(self, path: str, params: Optional[dict] = None) -> dict:
+        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
+            r = self._request_with_rate_limit_retry(lambda: c.get(path, params=params))
+            return self._handle_response(r)
+
     def _post_json(
         self,
         path: str,
@@ -363,9 +386,12 @@ class AVPAgent:
         params: Optional[dict] = None,
     ) -> dict:
         body = json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", path, body, params=params)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post(path, content=body, params=params, headers=headers)
+            def send_request():
+                headers = self._auth_headers("POST", path, body, params=params)
+                return c.post(path, content=body, params=params, headers=headers)
+
+            r = self._request_with_rate_limit_retry(send_request)
             return self._handle_response(r)
 
     def _post_raw_json(
@@ -375,21 +401,30 @@ class AVPAgent:
         params: Optional[dict] = None,
     ) -> str:
         body = b"" if body_data is None else json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", path, body, params=params)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post(path, content=body, params=params, headers=headers)
+            def send_request():
+                headers = self._auth_headers("POST", path, body, params=params)
+                return c.post(path, content=body, params=params, headers=headers)
+
+            r = self._request_with_rate_limit_retry(send_request)
             return self._handle_raw_json_response(r)
 
     def _get_json(self, path: str, params: Optional[dict] = None) -> dict:
-        headers = self._auth_headers("GET", path, params=params)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get(path, params=params, headers=headers)
+            def send_request():
+                headers = self._auth_headers("GET", path, params=params)
+                return c.get(path, params=params, headers=headers)
+
+            r = self._request_with_rate_limit_retry(send_request)
             return self._handle_response(r)
 
     def _get_raw_json(self, path: str, params: Optional[dict] = None) -> str:
-        headers = self._auth_headers("GET", path, params=params)
         with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get(path, params=params, headers=headers)
+            def send_request():
+                headers = self._auth_headers("GET", path, params=params)
+                return c.get(path, params=params, headers=headers)
+
+            r = self._request_with_rate_limit_retry(send_request)
             return self._handle_raw_json_response(r)
 
     def integration_preflight(self) -> IntegrationPreflightReport:
@@ -1001,12 +1036,7 @@ class AVPAgent:
         if signature:
             body_data["signature"] = signature
 
-        body = json.dumps(body_data).encode()
-        headers = self._auth_headers("POST", "/v1/cards", body)
-
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.post("/v1/cards", content=body, headers=headers)
-            return self._handle_response(r)
+        return self._post_json("/v1/cards", body_data)
 
     def search_agents(
         self,
@@ -1024,9 +1054,16 @@ class AVPAgent:
         if min_reputation is not None:
             params["min_reputation"] = min_reputation
 
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get("/v1/cards", params=params)
-            return self._handle_response(r)
+        results = self._get_public_json("/v1/cards", params=params)
+        if not isinstance(results, list):
+            return results
+
+        normalized = []
+        for item in results:
+            if isinstance(item, dict) and "did" not in item and "agent_did" in item:
+                item = {**item, "did": item["agent_did"]}
+            normalized.append(item)
+        return normalized
 
     # === Attestations ===
 
@@ -1204,9 +1241,7 @@ class AVPAgent:
             dict with score, confidence, interpretation
         """
         target = did or self._did
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get(f"/v1/reputation/{target}")
-            return self._handle_response(r)
+        return self._get_public_json(f"/v1/reputation/{target}")
 
     def can_trust(
         self,
@@ -1233,9 +1268,7 @@ class AVPAgent:
         if task_type:
             params["task_type"] = task_type
 
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get(f"/v1/reputation/{did}/trust-check", params=params)
-            return self._handle_response(r)
+        return self._get_public_json(f"/v1/reputation/{did}/trust-check", params=params)
 
     def get_reputation_bulk(self, dids: list[str]) -> dict:
         """
@@ -1251,9 +1284,7 @@ class AVPAgent:
             raise AVPValidationError("Bulk query requires 1-100 DIDs")
 
         dids_param = ",".join(dids)
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get("/v1/reputation/bulk", params={"dids": dids_param})
-            return self._handle_response(r)
+        return self._get_public_json("/v1/reputation/bulk", params={"dids": dids_param})
 
     def get_reputation_tracks(self, did: Optional[str] = None) -> dict:
         """
@@ -1269,9 +1300,27 @@ class AVPAgent:
             dict with did and tracks: {track_name: {score, confidence, attestations}}
         """
         target = did or self._did
-        with httpx.Client(base_url=self._base_url, timeout=self._timeout) as c:
-            r = c.get(f"/v1/reputation/{target}/tracks")
-            return self._handle_response(r)
+        return self._get_public_json(f"/v1/reputation/{target}/tracks")
+
+    def get_audit_trail(
+        self,
+        did: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Fetch public audit trail entries for an agent DID."""
+        target = did or self._did
+        result = self._get_public_json(
+            f"/v1/audit/{target}",
+            params={"limit": limit, "offset": offset},
+        )
+        if not isinstance(result, list):
+            raise AVPServerError(
+                f"Audit trail response must be a list, got {type(result).__name__}",
+                200,
+                str(result)[:200],
+            )
+        return result
 
     # === Runtime Control ===
 
@@ -1695,7 +1744,7 @@ class AVPAgent:
         try:
             sdk_version = version("agentveil")
         except PackageNotFoundError:
-            sdk_version = "0.7.8"
+            sdk_version = "0.7.9"
 
         return ProofPacket(
             agent_did=self._did,

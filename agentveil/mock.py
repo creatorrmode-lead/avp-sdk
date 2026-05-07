@@ -599,7 +599,7 @@ class AVPMockAgent(AVPAgent):
         Returns:
             dict with 'status', 'mode', and 'version'
         """
-        return {"status": "ok", "mode": "mock", "version": "0.7.8"}
+        return {"status": "ok", "mode": "mock", "version": "0.7.9"}
 
     def __repr__(self) -> str:
         status = "verified" if self._is_verified else "registered" if self._is_registered else "new"
