@@ -1,16 +1,18 @@
 <div align="center">
 
-# AgentVeil SDK
+<img src="docs/logo.png" alt="AgentVeil" width="160">
+
+# AgentVeil
 
 [![PyPI](https://img.shields.io/pypi/v/agentveil)](https://pypi.org/project/agentveil/)
 [![Python](https://img.shields.io/pypi/pyversions/agentveil)](https://pypi.org/project/agentveil/)
 [![Tests](https://github.com/agentveil-protocol/avp-sdk/actions/workflows/tests.yml/badge.svg)](https://github.com/agentveil-protocol/avp-sdk/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[Glama MCP Directory](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
+[![Glama MCP Directory](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk/badge)](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
 
 **Action control for autonomous agents — check posture, gate risky actions, prove execution.**
 
-[Install](#install) · [Quick Start](#quick-start) · [Reputation APIs](#reputation--trust-apis-reference) · [Examples](examples/) · [Docs](docs/)
+[Quick Start](#quick-start) · [Reputation APIs](#reputation--trust-apis-reference) · [Examples](examples/) · [Docs](docs/)
 
 </div>
 
@@ -44,14 +46,6 @@ agent.register(display_name="Demo Agent")
 
 rep = agent.get_reputation()
 print(rep["score"], rep["interpretation"])
-```
-
----
-
-## Install
-
-```bash
-pip install agentveil
 ```
 
 ## Quick Start
