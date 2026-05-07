@@ -2,7 +2,7 @@
 name = "agentveil"
 version = "0.7.9"
 description = "Python SDK for AgentVeil: agent identity, action gates, signed receipts, and proof packets"
-readme = "README.md"
+readme = {file = "README_PYPI.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{name = "Oleg Boiko", email = "ob@agentveil.dev"}]
