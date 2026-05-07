@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/agentveil)](https://pypi.org/project/agentveil/)
 [![Tests](https://github.com/agentveil-protocol/avp-sdk/actions/workflows/tests.yml/badge.svg)](https://github.com/agentveil-protocol/avp-sdk/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Glama MCP Directory](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk/badge)](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
+[![Glama MCP Directory](https://img.shields.io/badge/Glama-MCP%20Directory-blue)](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
 
 **Action control for autonomous agents — check posture, gate risky actions, prove execution.**
 
