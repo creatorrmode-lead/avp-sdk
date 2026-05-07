@@ -2,6 +2,19 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.7.10] — 2026-05-07
+
+### Changed
+- Added a PyPI-specific project description with absolute links and no embedded
+  GitHub-relative images, so the PyPI project page renders cleanly.
+- Polished the GitHub README hero with the AgentVeil logo, centered product
+  heading, compact badges, and simplified quick links.
+
+### Validation
+- `python3 -m build --outdir /tmp/avp-0710-build` passed.
+- `python3 -m twine check` passed for the built wheel and sdist.
+- `python3 -m pytest -q` passed with `236 passed, 19 skipped`.
+
 ## [0.7.7] — 2026-05-06
 
 ### Changed
