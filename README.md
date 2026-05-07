@@ -1,3 +1,5 @@
+<div align="center">
+
 # AgentVeil SDK
 
 [![PyPI](https://img.shields.io/pypi/v/agentveil)](https://pypi.org/project/agentveil/)
@@ -6,7 +8,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [Glama MCP Directory](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
 
-AgentVeil helps teams control risky AI agent actions: check posture before runtime, gate execution, and prove what happened with signed receipts.
+**Action control for autonomous agents — check posture, gate risky actions, prove execution.**
+
+[Install](#install) · [Quick Start](#quick-start) · [Reputation APIs](#reputation--trust-apis-reference) · [Examples](examples/) · [Docs](docs/)
+
+</div>
 
 ```bash
 pip install agentveil
