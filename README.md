@@ -34,7 +34,7 @@ pip install agentveil
 
 > **Visual overview:** preflight → runtime gate → approval → controlled execution → offline proof.
 >
-> **Proof Pack walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — annotated local-backend reputation evidence flow: score recompute → trust-check deny → webhook alert → audit chain verification.
+> **Audit chain walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — local-backend demo proving offline audit-trail integrity verification. End-to-end flow: signed events → tamper-resistant chain → offline verify (stdlib only, no SDK dependency).
 >
 > **Controlled-action proof packets:** Runtime Gate flows can export signed proof packets with `agent.build_proof_packet(...)`; see [Customer Integration](docs/CUSTOMER_INTEGRATION.md).
 
@@ -250,6 +250,7 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 | [Integrations](docs/INTEGRATIONS.md) | Framework-specific setup guides |
 | [Webhook Alerts](docs/WEBHOOKS.md) | Push notification setup |
 | [Protocol Spec](docs/PROTOCOL.md) | AgentVeil wire format and authentication |
+| [Security Model](docs/SECURITY_MODEL.md) | Mode 1 SDK developer flow, Mode 2/3 gateway enforcement roadmap |
 | [Security Context](docs/SECURITY_CONTEXT.md) | Why agent trust matters — CVEs and market data |
 | [Changelog](CHANGELOG.md) | Version history |
 
@@ -260,7 +261,7 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 | Example | Description |
 |---------|-------------|
 | [`first_controlled_action.py`](examples/first_controlled_action.py) | **Action control demo** — preflight → Runtime Gate → approval routing → signed receipt |
-| [`proof_pack/`](examples/proof_pack/) | **Evidence walkthrough** — score recompute → trust-check deny → webhook alert → audit chain verification. Local backend required. |
+| [`proof_pack/`](examples/proof_pack/) | **Offline audit verification** — local-backend demo: signed events → tamper-resistant chain → independent offline verification (no SDK or AVP API needed). Local backend required. |
 | [`standalone_demo.py`](examples/standalone_demo.py) | **Reputation flow demo** — registration, peer attestations, scoring (mock mode, no server) |
 | [`quickstart.py`](examples/quickstart.py) | Register, publish card, check reputation |
 | [`two_agents.py`](examples/two_agents.py) | Full A2A interaction with attestations |
