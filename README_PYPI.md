@@ -13,13 +13,22 @@ pip install agentveil
 Run locally with real cryptography and mocked HTTP. No server is required.
 
 ```python
+from datetime import timedelta
 from agentveil import AVPAgent
 
+owner = AVPAgent.create(mock=True, name="workflow-owner")
 agent = AVPAgent.create(mock=True, name="demo-agent")
 agent.register(display_name="Demo Agent")
 
-rep = agent.get_reputation()
-print(rep["score"], rep["interpretation"])
+delegation = owner.issue_delegation_receipt(
+    agent_did=agent.did,
+    allowed_categories=["deploy"],
+    valid_for=timedelta(minutes=15),
+)
+verification = agent.verify_delegation_receipt(delegation)
+
+print("delegation valid:", verification["valid"])
+print("scope:", verification["scope"][0]["value"])
 ```
 
 For production setup, see the [Customer Integration guide](https://github.com/agentveil-protocol/avp-sdk/blob/main/docs/CUSTOMER_INTEGRATION.md).

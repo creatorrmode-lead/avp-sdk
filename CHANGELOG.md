@@ -2,6 +2,26 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [0.7.11] — 2026-05-08
+
+### Changed
+- Reframed PyPI metadata around action-control positioning:
+  - `pyproject.toml` description now leads with posture checks, action gates,
+    signed receipts, and proof packets instead of identity-first phrasing.
+  - `README_PYPI.md` Quick Start now uses `issue_delegation_receipt(...)` and
+    `verify_delegation_receipt(...)`, matching the main README action-control
+    lead.
+
+No functional SDK changes. `agentveil.__version__` was updated to match the
+wheel metadata. Same API surface as 0.7.10.
+
+### Validation
+- `python3 -m build` passed.
+- `python3 -m twine check` passed for the built wheel and sdist.
+- `python3 -m pytest -q` passed with `236 passed, 19 skipped, 1 warning`.
+- PyPI Quick Start snippet verified in a clean venv: `delegation valid: True`,
+  `scope: deploy`.
+
 ## [0.7.10] — 2026-05-07
 
 ### Changed
