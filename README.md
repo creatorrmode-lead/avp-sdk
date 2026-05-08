@@ -247,6 +247,7 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 |-----|-------------|
 | [API Reference](docs/API.md) | Full SDK method reference with examples |
 | [Customer Integration](docs/CUSTOMER_INTEGRATION.md) | Controlled-action flow, secrets, errors, and compliance evidence |
+| [Registration & Verification](docs/REGISTRATION.md) | Agent registration lifecycle, states, error cases, passphrase security |
 | [DelegationReceipt Guide](docs/DELEGATION_RECEIPT.md) | Issuance, verification, common patterns, error handling |
 | [Integrations](docs/INTEGRATIONS.md) | Framework-specific setup guides |
 | [Webhook Alerts](docs/WEBHOOKS.md) | Push notification setup |
@@ -262,6 +263,7 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 | Example | Description |
 |---------|-------------|
 | [`first_controlled_action.py`](examples/first_controlled_action.py) | **Action control demo** — preflight → Runtime Gate → approval routing → signed receipt |
+| [`registration/`](examples/registration/) | **Registration patterns** — first-time setup, verification state, encrypted reload |
 | [`delegation/`](examples/delegation/) | **DelegationReceipt patterns** — issue, verify offline, persist/reload, multi-scope |
 | [`proof_pack/`](examples/proof_pack/) | **Offline audit verification** — local-backend demo: signed events → tamper-resistant chain → independent offline verification (no SDK or AVP API needed). Local backend required. |
 | [`standalone_demo.py`](examples/standalone_demo.py) | **Reputation flow demo** — registration, peer attestations, scoring (mock mode, no server) |
