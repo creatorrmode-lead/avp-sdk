@@ -292,6 +292,7 @@ Negative attestations require both `context` and a 64-character lowercase hex
 | [Mode A Quickstart](docs/MODE_A_QUICKSTART.md) | Project owner path — scan, policy, evaluate, evidence |
 | [Error Handling](docs/ERRORS.md) | Exception hierarchy, recovery patterns, HTTP status mapping |
 | [Proof Packet Guide](docs/PROOF_PACKET.md) | Build, save, verify signed action evidence offline |
+| [Live Developer Adoption Smoke](docs/LIVE_DEVELOPER_ADOPTION_SMOKE.md) | Production validation for Runtime Gate, approval, proof packets, typed errors |
 | [Approval Routing](docs/APPROVAL_ROUTING.md) | Resolve approval_required outcomes, grant/deny patterns, resume execution |
 | [Registration & Verification](docs/REGISTRATION.md) | Agent registration lifecycle, states, error cases, passphrase security |
 | [DelegationReceipt Guide](docs/DELEGATION_RECEIPT.md) | Issuance, verification, common patterns, error handling |
