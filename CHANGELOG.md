@@ -2,6 +2,13 @@
 
 All notable changes to the `agentveil` SDK.
 
+## [Unreleased]
+
+### Changed
+- Corrected Microsoft AGT / AgentMesh docs wording so `AVPProvider` remains
+  named while AgentVeil is described as an external trust and reputation
+  integration.
+
 ## [0.7.13] - 2026-05-08
 
 Fresh release for the MCP action-control toolbox expansion.

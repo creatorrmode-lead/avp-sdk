@@ -24,7 +24,7 @@ pip install agentveil
 
 > [Why agent trust infrastructure matters](docs/SECURITY_CONTEXT.md) — verified CVEs, market data, and the structural problem AgentVeil addresses.
 
-> **[AVPProvider merged into Microsoft Agent Governance Toolkit (PR #1010).](https://github.com/microsoft/agent-governance-toolkit/pull/1010)** AgentVeil is available as an external trust provider for Microsoft AGT / AgentMesh.
+> **[AVPProvider merged into Microsoft Agent Governance Toolkit (PR #1010).](https://github.com/microsoft/agent-governance-toolkit/pull/1010)** AgentVeil can be connected to Microsoft AGT / AgentMesh as an external trust and reputation integration.
 
 > **Paper:** Boiko, O. (2026). *[Why AI Agent Reputation Needs Both Link Analysis and Flow-Based Gating](https://zenodo.org/records/19730525)*. Zenodo.
 
@@ -239,7 +239,7 @@ def review_code(pr_url: str) -> str:
 | **PydanticAI** | `pip install agentveil pydantic-ai` | Tool example: [`examples/pydantic_ai_example.py`](examples/pydantic_ai_example.py) |
 | **Paperclip** | `pip install agentveil` | `avp_should_delegate(...)`, `avp_evaluate_team(...)`, `avp_plugin_tools()` |
 | **AWS Bedrock** | `pip install agentveil boto3` | Converse API example: [`examples/aws_bedrock.py`](examples/aws_bedrock.py) |
-| **Microsoft AGT / AgentMesh** | `pip install agentmesh-avp` | `AVPProvider` package for Agent Governance Toolkit / AgentMesh integration |
+| **Microsoft AGT / AgentMesh** | `pip install agentmesh-avp` | `agentmesh-avp` integration package for Agent Governance Toolkit / AgentMesh |
 
 Full integration guides: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
 
