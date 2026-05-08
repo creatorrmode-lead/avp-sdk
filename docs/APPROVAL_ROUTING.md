@@ -48,7 +48,7 @@ ControlledActionOutcome(
 )
 ```
 
-Use `outcome.approval["id"]` as the approval identifier. The initial
+Use `outcome.approval["approval_id"]` as the approval identifier. The initial
 `approval_required` outcome does not populate `outcome.approval_id`.
 
 ### `create_approval(...)`

@@ -349,7 +349,7 @@ class TestRuntimeControlContract:
             captured["body"] = json.loads(kwargs.get("content", b"{}"))
             resp = MagicMock(spec=httpx.Response)
             resp.status_code = 200
-            resp.json.return_value = {"id": "urn:uuid:approval", "status": "PENDING"}
+            resp.json.return_value = {"approval_id": "urn:uuid:approval", "status": "PENDING"}
             return resp
 
         receipt = {"id": "urn:uuid:receipt", "issuer": "did:key:z6MkIssuer"}

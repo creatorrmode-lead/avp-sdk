@@ -77,7 +77,7 @@ outcome = agent.controlled_action(
 if outcome.status == "executed":
     receipt_jcs = outcome.receipt_jcs
 elif outcome.status == "approval_required":
-    approval_id = outcome.approval["id"]
+    approval_id = outcome.approval["approval_id"]
 elif outcome.status == "blocked":
     raise RuntimeError(outcome.reason)
 ```

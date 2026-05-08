@@ -98,7 +98,7 @@ outcome = agent.controlled_action(
 )
 
 if outcome.status == "approval_required":
-    wait_for_principal_approval(outcome.approval["id"])
+    wait_for_principal_approval(outcome.approval["approval_id"])
 elif outcome.status == "executed":
     store(outcome.receipt_jcs)
 elif outcome.status == "blocked":

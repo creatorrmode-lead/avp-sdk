@@ -118,7 +118,7 @@ if result.status == "executed":
     receipt_jcs = result.receipt_jcs      # exact signed proof artifact
     receipt = result.receipt              # parsed convenience view
 elif result.status == "approval_required":
-    approval_id = result.approval["id"]
+    approval_id = result.approval["approval_id"]
 elif result.status == "blocked":
     reason = result.reason
 ```
@@ -159,7 +159,7 @@ receipt in `AVP_DELEGATION_RECEIPT_FILE` or `AVP_DELEGATION_RECEIPT_JSON`.
 ## Approval Resume Path
 
 When `controlled_action(...)` returns `approval_required`, use
-`result.approval["id"]` and route the request to the principal. See
+`result.approval["approval_id"]` and route the request to the principal. See
 [Approval Routing](APPROVAL_ROUTING.md) for polling, approve/deny, and resume
 patterns.
 

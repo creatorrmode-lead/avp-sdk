@@ -89,7 +89,7 @@ class DemoApprovalService:
         approval_id = f"urn:uuid:{uuid.uuid4()}"
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
         approval = {
-            "id": approval_id,
+            "approval_id": approval_id,
             "status": "pending",
             "audit_id": audit_id,
             "action": action,
@@ -203,7 +203,7 @@ def run_mock_flow() -> int:
         delegation_receipt=delegation,
     )
 
-    approval_id = outcome.approval["id"]
+    approval_id = outcome.approval["approval_id"]
     approval = demo.get_approval(approval_id)
     print(f"status={outcome.status}")
     print(f"approval_id={approval_id}")
@@ -268,10 +268,10 @@ def run_live_flow() -> int:
         print("live_note=configure backend policy so this action requires approval")
         return NON_RETRYABLE_ERROR
 
-    if not outcome.approval or "id" not in outcome.approval:
-        raise RuntimeError("approval_required outcome did not include approval['id']")
+    if not outcome.approval or "approval_id" not in outcome.approval:
+        raise RuntimeError("approval_required outcome did not include approval['approval_id']")
 
-    approval_id = outcome.approval["id"]
+    approval_id = outcome.approval["approval_id"]
     print(f"approval_id={approval_id}")
     print(f"outcome_approval_id={outcome.approval_id or '<empty>'}")
 
