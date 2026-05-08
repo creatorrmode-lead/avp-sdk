@@ -12,7 +12,7 @@
 
 **Action control for autonomous agents — check posture, gate risky actions, prove execution.**
 
-[Quick Start](#quick-start) · [Reputation APIs](#reputation--trust-apis-reference) · [Examples](examples/) · [Docs](docs/)
+[Quick Start](#quick-start) · [Comparison](#comparison) · [Examples](examples/) · [Docs](docs/)
 
 </div>
 
@@ -39,13 +39,19 @@ pip install agentveil
 > **Controlled-action proof packets:** Runtime Gate flows can export signed proof packets with `agent.build_proof_packet(...)`; see [Customer Integration](docs/CUSTOMER_INTEGRATION.md).
 
 ```python
+from datetime import timedelta
 from agentveil import AVPAgent
 
-agent = AVPAgent.create(mock=True, name="demo-agent")  # real crypto, mocked HTTP — no server needed
+owner = AVPAgent.create(mock=True, name="workflow-owner")
+agent = AVPAgent.create(mock=True, name="demo-agent")
 agent.register(display_name="Demo Agent")
 
-rep = agent.get_reputation()
-print(rep["score"], rep["interpretation"])
+delegation = owner.issue_delegation_receipt(
+    agent_did=agent.did,
+    allowed_categories=["deploy"],
+    valid_for=timedelta(minutes=15),
+)
+print(agent.verify_delegation_receipt(delegation)["valid"])
 ```
 
 ## Quick Start
@@ -53,16 +59,22 @@ print(rep["score"], rep["interpretation"])
 ### Run locally — no server required
 
 ```python
+from datetime import timedelta
 from agentveil import AVPAgent
 
-agent = AVPAgent.create(mock=True, name="demo-agent")  # real crypto, mocked HTTP — no server needed
+owner = AVPAgent.create(mock=True, name="workflow-owner")
+agent = AVPAgent.create(mock=True, name="demo-agent")
 agent.register(display_name="Test Agent")
 
-rep = agent.get_reputation()
+delegation = owner.issue_delegation_receipt(
+    agent_did=agent.did,
+    allowed_categories=["deploy"],
+    valid_for=timedelta(minutes=15),
+)
+verification = agent.verify_delegation_receipt(delegation)
 
-print("did:", rep["did"])
-print("score:", rep["score"])
-print("interpretation:", rep["interpretation"])
+print("delegation valid:", verification["valid"])
+print("scope:", verification["scope"][0]["value"])
 ```
 
 For production identity, Runtime Gate, approvals, and signed receipts, see [Customer Integration](docs/CUSTOMER_INTEGRATION.md).
@@ -110,7 +122,35 @@ assert AVPAgent.verify_w3c_credential(cred)  # offline, no API call
 
 ---
 
-## Reputation & Trust APIs (reference)
+## Why This Exists
+
+AI agents increasingly hold direct access to production credentials, deploy
+workflows, and developer infrastructure. AgentVeil provides three things:
+
+1. **Pre-runtime checks** — find risky agent capabilities (bypass paths, exposed credentials, missing approvals) before they reach production
+2. **Runtime gating** — evaluate risky actions before execution, route through signed approval when needed
+3. **Verifiable evidence** — produce signed receipts your audit / customer / partner can verify offline, no SDK or AVP API required
+
+See [Security Context](docs/SECURITY_CONTEXT.md) for verified CVEs, market data,
+and the structural problem AgentVeil addresses.
+
+---
+
+## Comparison
+
+|  | Without AgentVeil | With AgentVeil |
+|---|---|---|
+| **Risky capability discovery** | Found in incident review | Pre-runtime posture check finds bypass paths, exposed credentials, missing approvals |
+| **Risky action execution** | Agent calls `deploy` / `transfer` / `delete` directly | Evaluated before execution → allow / approval_required / block |
+| **Approval on critical steps** | Rubber-stamped or skipped | Signed approval receipt — single-use, expiring, bound to exact action/resource/env |
+| **Audit evidence** | "Agent triggered X" in app logs | Signed receipt with action hash, decision hash, approval hash, timestamp — verifiable offline by audit / customer / partner |
+
+---
+
+## Decision Inputs (advisory)
+
+These advisory APIs feed the Runtime Gate's risk assessment. They inform
+action gating decisions but do not grant execution authority on their own.
 
 For advisory selection and existing integrations, the SDK also includes:
 
@@ -134,16 +174,20 @@ def review_code(pr_url: str) -> str:
 
 ## Features
 
+**Action control surface**
+
 - **Posture Checks** — inspect agent identity, status (active/suspended), and reputation signals before runtime
 - **Runtime Gate** — evaluate risky actions before execution and return allow / approval required / block
 - **Signed Receipts** — keep tamper-evident proof for gate decisions, approvals, and execution
 - **W3C VC v2.0 Credentials** — export offline-verifiable credentials with `eddsa-jcs-2022` Data Integrity proofs
-- **DID Identity** — W3C `did:key` with Ed25519 keys for portable agent identity
+- **Webhook Alerts** — score-change notifications to any HTTP endpoint ([setup guide](docs/WEBHOOKS.md))
+- **Framework Integrations** — SDK tools for CrewAI, LangGraph, AutoGen, OpenAI, Claude MCP, Paperclip, and more
+
+**Supporting signals (advisory)**
+
 - **Reputation Signals** — peer attestations, confidence scoring, and advisory trust checks
 - **Agent Discovery** — publish capability cards and find agents by skill and reputation
-- **Webhook Alerts** — score-change notifications to any HTTP endpoint ([setup guide](docs/WEBHOOKS.md))
 - **Dispute & Review Support** — attach evidence and review contested attestations
-- **Framework Integrations** — SDK tools for CrewAI, LangGraph, AutoGen, OpenAI, Claude MCP, Paperclip, and more
 
 ---
 
@@ -169,6 +213,9 @@ Full integration guides: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
 
 ## Batch Attestations
 
+Attestations from peer agents build reputation history that feeds future
+Runtime Gate decisions.
+
 Submit up to 50 attestations in a single request. Each is validated independently — partial success is possible.
 
 ```python
@@ -187,6 +234,7 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 ## Security
 
 - Ed25519 signature authentication with nonce anti-replay
+- W3C `did:key` identity with Ed25519 keys for portable agent identity
 - Input validation for signed SDK/API requests
 - Agent status checks for active, suspended, revoked, or migrated identities
 - Audit trail — SHA-256 hash-chained events with optional IPFS anchoring for published proof artifacts
@@ -211,13 +259,22 @@ Each attestation is individually signed with Ed25519. Optional fields: `context`
 
 | Example | Description |
 |---------|-------------|
+| [`first_controlled_action.py`](examples/first_controlled_action.py) | **Action control demo** — preflight → Runtime Gate → approval routing → signed receipt |
 | [`proof_pack/`](examples/proof_pack/) | **Evidence walkthrough** — score recompute → trust-check deny → webhook alert → audit chain verification. Local backend required. |
-| [`standalone_demo.py`](examples/standalone_demo.py) | No server needed — full SDK demo with mock mode |
+| [`standalone_demo.py`](examples/standalone_demo.py) | **Reputation flow demo** — registration, peer attestations, scoring (mock mode, no server) |
 | [`quickstart.py`](examples/quickstart.py) | Register, publish card, check reputation |
 | [`two_agents.py`](examples/two_agents.py) | Full A2A interaction with attestations |
 | [`verify_credential_standalone.py`](examples/verify_credential_standalone.py) | Offline credential verification (no SDK needed) |
 
 Framework examples: [CrewAI](examples/crewai_example.py) · [LangGraph](examples/langgraph_example.py) · [AutoGen](examples/autogen_example.py) · [OpenAI](examples/openai_example.py) · [Claude MCP](examples/claude_mcp_example.py) · [Paperclip](examples/paperclip_example.py)
+
+---
+
+## Community
+
+- ⭐ **[Star this repo](https://github.com/agentveil-protocol/avp-sdk/stargazers)** — helps others discover AgentVeil
+- 🐛 **[Open an issue](https://github.com/agentveil-protocol/avp-sdk/issues)** — bugs, questions, feature requests
+- 📖 **[Customer Integration guide](docs/CUSTOMER_INTEGRATION.md)** — production setup
 
 ---
 
