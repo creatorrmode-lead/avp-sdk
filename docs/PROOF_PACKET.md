@@ -43,6 +43,10 @@ Parameters:
 | `remediation_case` | Optional remediation/dispute context. |
 | `remediation_refs` | Optional evidence references associated with remediation. |
 
+Fetch the signed Runtime Gate receipt with `agent.get_decision_receipt(audit_id)`
+after `controlled_action(...)` returns. Pass the exact returned string as
+`decision_receipt_jcs`; do not parse and re-serialize it.
+
 The helper does not fetch remote resources or modify signed receipt text. Keep
 the exact `*_receipt_jcs` strings returned by the SDK/API.
 

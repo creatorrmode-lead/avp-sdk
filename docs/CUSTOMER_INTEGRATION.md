@@ -182,6 +182,7 @@ Use these when your application wants to own orchestration:
 
 - `runtime_evaluate(...)`
 - `get_runtime_decision(audit_id)`
+- `get_decision_receipt(audit_id)`
 - `execute(...)`
 - `get_execution_receipt(receipt_id)`
 - `create_approval(...)`
@@ -196,7 +197,9 @@ Use these when your application wants to own orchestration:
 - `get_remediation_case(case_id)`
 - `add_remediation_evidence(...)`
 
-`execute()`, `get_execution_receipt()`, `approve()`, and `deny()` return exact signed JSON text. Keep that string for offline proof.
+`get_decision_receipt()`, `execute()`, `get_execution_receipt()`, `approve()`,
+and `deny()` return exact signed JSON text. Keep those strings for offline
+proof.
 
 ## Error Map
 
