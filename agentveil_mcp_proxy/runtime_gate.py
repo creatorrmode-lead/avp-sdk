@@ -17,6 +17,11 @@ from agentveil.agent import AVPAgent
 from agentveil.delegation import DelegationInvalid, verify_delegation
 from agentveil.proof import ProofVerificationError, verify_signed_jcs
 from agentveil_mcp_proxy.classification import ClassifiedToolCall
+from agentveil_mcp_proxy.identity import (
+    IdentityError,
+    IdentityPassphraseRequired,
+    load_agent_from_identity,
+)
 from agentveil_mcp_proxy.policy import ProxyConfig
 
 
@@ -88,6 +93,7 @@ class RuntimeGateClient:
         control_grant_path: Path,
         config: ProxyConfig,
         agent_cls: Callable[..., Any] = AVPAgent,
+        passphrase: str | None = None,
         timeout: float = DEFAULT_RUNTIME_GATE_TIMEOUT_SECONDS,
         environment: str = DEFAULT_RUNTIME_ENVIRONMENT,
     ) -> "RuntimeGateClient":
@@ -95,20 +101,19 @@ class RuntimeGateClient:
 
         identity = _read_json_object(identity_path, "agent identity")
         control_grant = _read_json_object(control_grant_path, "control grant")
-        private_key_hex = identity.get("private_key_hex")
-        if not isinstance(private_key_hex, str) or not private_key_hex:
-            raise RuntimeGateUnavailableError("proxy identity private key unavailable")
         try:
-            private_key = bytes.fromhex(private_key_hex)
-        except ValueError as exc:
-            raise RuntimeGateUnavailableError("proxy identity private key invalid") from exc
-        try:
-            agent = agent_cls(
-                config.avp.base_url,
-                private_key,
-                name=config.avp.agent_name,
+            agent = load_agent_from_identity(
+                identity,
+                base_url=config.avp.base_url,
+                agent_name=config.avp.agent_name,
+                passphrase=passphrase,
+                agent_cls=agent_cls,
                 timeout=timeout,
             )
+        except IdentityPassphraseRequired as exc:
+            raise RuntimeGateUnavailableError("encrypted identity passphrase required") from exc
+        except IdentityError as exc:
+            raise RuntimeGateUnavailableError("proxy identity could not be loaded") from exc
         except Exception as exc:
             raise RuntimeGateUnavailableError("proxy identity could not be loaded") from exc
 

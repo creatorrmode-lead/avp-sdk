@@ -40,3 +40,34 @@ including pretty-printed objects that span multiple lines. Each downstream
 message is bounded to 1 MiB. If a downstream response exceeds that limit or is
 not a JSON object, the proxy returns a sanitized downstream-unavailable error to
 the client and does not include response content in logs or client output.
+
+## Proxy Identity Storage
+
+`agentveil-mcp-proxy init` encrypts the local proxy identity by default. In an
+interactive shell it prompts for a passphrase and confirmation. In automated
+setup, provide the passphrase with one of:
+
+```bash
+agentveil-mcp-proxy init --passphrase-file /run/secrets/avp-proxy-passphrase
+AVP_PROXY_PASSPHRASE='...' agentveil-mcp-proxy init
+```
+
+`doctor`, `run`, and `reissue-grant` use the same passphrase sources. Plaintext
+storage is available only through the explicit `--plaintext` opt-out on `init`;
+the command prints a warning because the private key is then protected only by
+local file permissions.
+
+## Control Grant Lifecycle
+
+The local control grant defaults to a 30-day TTL. `doctor` warns when the grant
+expires within 7 days and fails when it has already expired.
+
+To rotate the grant:
+
+```bash
+agentveil-mcp-proxy reissue-grant --passphrase-file /run/secrets/avp-proxy-passphrase
+```
+
+The command refuses to replace a still-valid grant with more than 24 hours
+remaining unless `--force` is passed. For scheduled checks, `--auto` prints a
+single structured status line.

@@ -416,7 +416,7 @@ def _wait_for_process_exit(pid: int, timeout: float = 2.0) -> bool:
 
 def test_run_mirrors_initialize_initialized_and_tools_list(tmp_path):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     log_path = tmp_path / "downstream.log"
     _set_downstream(init.config_path, _normal_downstream(tmp_path), log_path=log_path)
 
@@ -427,7 +427,11 @@ def test_run_mirrors_initialize_initialized_and_tools_list(tmp_path):
     )
     client_out = io.StringIO()
 
-    assert run_proxy(home=home, client_in=client_in, out=client_out) == 0
+    assert run_proxy(
+        home=home,
+        client_in=client_in,
+        out=client_out,
+    ) == 0
     responses = _responses(client_out.getvalue())
 
     assert [response["id"] for response in responses] == [1, 2]
@@ -445,7 +449,7 @@ def test_run_mirrors_initialize_initialized_and_tools_list(tmp_path):
 
 def test_run_passthrough_forwards_local_allow_without_backend_or_gate(tmp_path, monkeypatch):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     log_path = tmp_path / "downstream.log"
     _set_downstream(init.config_path, _normal_downstream(tmp_path), log_path=log_path)
     _set_allow_policy(init.config_path, server="fake-downstream", tool="read_file")
@@ -466,7 +470,11 @@ def test_run_passthrough_forwards_local_allow_without_backend_or_gate(tmp_path, 
     )
     client_out = io.StringIO()
 
-    assert run_proxy(home=home, client_in=client_in, out=client_out) == 0
+    assert run_proxy(
+        home=home,
+        client_in=client_in,
+        out=client_out,
+    ) == 0
     responses = _responses(client_out.getvalue())
 
     assert responses == [{
@@ -479,7 +487,7 @@ def test_run_passthrough_forwards_local_allow_without_backend_or_gate(tmp_path, 
 
 def test_run_passthrough_does_not_construct_avp_agent_or_call_backend(tmp_path, monkeypatch):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     _set_downstream(init.config_path, _normal_downstream(tmp_path))
 
     class ExplodingAgent:
@@ -501,7 +509,7 @@ def test_downstream_env_is_minimal_by_default_and_explicit_only(tmp_path, monkey
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", SECRET)
     monkeypatch.setenv("AVP_TEST_ALLOWED_ENV", "allowed")
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     config = json.loads(init.config_path.read_text(encoding="utf-8"))
     config["downstream"] = {
         "name": "env-test",
@@ -528,7 +536,7 @@ def test_downstream_env_is_minimal_by_default_and_explicit_only(tmp_path, monkey
 
 def test_downstream_notifications_are_forwarded_before_matching_response(tmp_path):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     _set_downstream(init.config_path, _notifying_downstream(tmp_path))
 
     client_out = io.StringIO()
@@ -653,7 +661,7 @@ def test_classifier_callback_exception_does_not_break_passthrough(tmp_path):
 
 def test_downstream_startup_failure_is_sanitized(tmp_path):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     config = json.loads(init.config_path.read_text(encoding="utf-8"))
     config["downstream"] = {
         "name": "missing",
@@ -663,7 +671,11 @@ def test_downstream_startup_failure_is_sanitized(tmp_path):
     _write_json(init.config_path, config)
 
     try:
-        run_proxy(home=home, client_in=io.StringIO(""), out=io.StringIO())
+        run_proxy(
+            home=home,
+            client_in=io.StringIO(""),
+            out=io.StringIO(),
+        )
     except ProxyCliError as exc:
         assert exc.exit_code == 1
         assert "downstream startup failed" in str(exc)
@@ -674,7 +686,7 @@ def test_downstream_startup_failure_is_sanitized(tmp_path):
 
 def test_downstream_crash_mid_run_returns_sanitized_jsonrpc_error(tmp_path):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     _set_downstream(init.config_path, _crashing_downstream(tmp_path))
 
     client_in = io.StringIO(
@@ -683,7 +695,11 @@ def test_downstream_crash_mid_run_returns_sanitized_jsonrpc_error(tmp_path):
     )
     client_out = io.StringIO()
 
-    assert run_proxy(home=home, client_in=client_in, out=client_out) == 0
+    assert run_proxy(
+        home=home,
+        client_in=client_in,
+        out=client_out,
+    ) == 0
     responses = _responses(client_out.getvalue())
 
     assert responses[0] == {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
@@ -710,7 +726,7 @@ def test_run_proxy_responds_to_sigterm_with_clean_shutdown(tmp_path):
         pytest.skip("Windows termination semantics differ from POSIX SIGTERM")
 
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     downstream_pid_file = tmp_path / "downstream.pid"
     config = json.loads(init.config_path.read_text(encoding="utf-8"))
     config["downstream"] = {
@@ -750,12 +766,16 @@ def test_run_proxy_responds_to_sigterm_with_clean_shutdown(tmp_path):
 
 def test_signal_handlers_are_restored_after_run_proxy(tmp_path):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     _set_downstream(init.config_path, _idle_downstream(tmp_path))
     before_term = signal.getsignal(signal.SIGTERM)
     before_int = signal.getsignal(signal.SIGINT)
 
-    assert run_proxy(home=home, client_in=io.StringIO(""), out=io.StringIO()) == 0
+    assert run_proxy(
+        home=home,
+        client_in=io.StringIO(""),
+        out=io.StringIO(),
+    ) == 0
 
     assert signal.getsignal(signal.SIGTERM) == before_term
     assert signal.getsignal(signal.SIGINT) == before_int
@@ -950,7 +970,7 @@ def test_downstream_response_timeout_does_not_leak_request_data(tmp_path):
 
 def test_downstream_config_rejects_unknown_fields(tmp_path):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     config = json.loads(init.config_path.read_text(encoding="utf-8"))
     config["downstream"] = {
         "name": "bad",
@@ -961,7 +981,11 @@ def test_downstream_config_rejects_unknown_fields(tmp_path):
     _write_json(init.config_path, config)
 
     try:
-        run_proxy(home=home, client_in=io.StringIO(""), out=io.StringIO())
+        run_proxy(
+            home=home,
+            client_in=io.StringIO(""),
+            out=io.StringIO(),
+        )
     except ProxyCliError as exc:
         assert exc.exit_code == 1
         assert "unknown field" in str(exc)
@@ -972,7 +996,7 @@ def test_downstream_config_rejects_unknown_fields(tmp_path):
 
 def test_downstream_config_accepts_response_timeout_seconds(tmp_path):
     home = tmp_path / "avp-home"
-    init = init_proxy(home=home, agent_name="proxy")
+    init = init_proxy(home=home, agent_name="proxy", plaintext=True)
     config = json.loads(init.config_path.read_text(encoding="utf-8"))
     config["downstream"] = {
         "name": "timed",

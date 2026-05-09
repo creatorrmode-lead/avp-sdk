@@ -23,11 +23,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import agentveil.agent as agent_module
 from agentveil.agent import AVPAgent
 from agentveil.proof import ProofVerificationError, verify_signed_jcs
 from agentveil_mcp_proxy.classification import ClassifiedToolCall, sha256_jcs, sha256_text
 from agentveil_mcp_proxy.cli import init_proxy
+from agentveil_mcp_proxy.identity import load_agent_from_identity
 from agentveil_mcp_proxy.policy import (
     PolicyDecision,
     PolicyEvaluation,
@@ -45,6 +45,7 @@ TRUSTED_SIGNERS = (
     "did:key:z6MkkvQQ9SxaNX9eEVHd5NtEamVY3YiZSpHZE567Vxs5jQQ3",
     "did:key:z6Mkjw22249tpNN4LJGLyq1oGSq1Skh3ks94fiMrgi4oqveo",
 )
+PASSPHRASE = os.environ.get("AVP_PROXY_PASSPHRASE", "agentveil-live-smoke-passphrase")
 
 
 @dataclass(frozen=True)
@@ -110,12 +111,13 @@ def load_json(path: Path) -> dict:
 
 
 def register_proxy_identity(identity_path: Path) -> AVPAgent:
-    agent_module.AGENTS_DIR = str(HOME / "agents")
     identity = load_json(identity_path)
-    agent = AVPAgent(
-        BASE_URL,
-        bytes.fromhex(identity["private_key_hex"]),
-        name=AGENT_NAME,
+    agent = load_agent_from_identity(
+        identity,
+        base_url=BASE_URL,
+        agent_name=AGENT_NAME,
+        passphrase=PASSPHRASE,
+        agent_cls=AVPAgent,
         timeout=15.0,
     )
     if not agent.is_registered:
@@ -195,6 +197,7 @@ def main() -> int:
             agent_name=AGENT_NAME,
             trusted_signer_dids=TRUSTED_SIGNERS,
             allowed_categories=["infrastructure"],
+            passphrase=PASSPHRASE,
             force=True,
         )
         registered_agent = register_proxy_identity(result.identity_path)
@@ -215,6 +218,7 @@ def main() -> int:
                 identity_path=result.identity_path,
                 control_grant_path=result.control_grant_path,
                 config=config,
+                passphrase=PASSPHRASE,
                 timeout=2.0,
                 environment=fixture.environment,
             )

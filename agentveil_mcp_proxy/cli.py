@@ -1,16 +1,20 @@
 """Minimal CLI for the MCP proxy.
 
-P5 adds Runtime Gate enforcement for ``ask_backend`` policy decisions. Approval
-UI, WAL evidence, and circuit breaking remain future slices.
+The CLI creates encrypted local proxy identities by default, manages the
+control grant used by Runtime Gate, and runs stdio passthrough for configured
+downstream MCP servers. Approval UI, WAL evidence, and circuit breaking remain
+future slices.
 """
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+import getpass
 import io
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -23,6 +27,17 @@ from nacl.signing import SigningKey
 from agentveil.agent import AVPAgent
 from agentveil.delegation import DelegationInvalid, verify_delegation
 from agentveil_mcp_proxy.classification import ToolCallClassifier
+from agentveil_mcp_proxy.identity import (
+    IdentityDecryptError,
+    IdentityError,
+    IdentityInvalidError,
+    IdentityPassphraseRequired,
+    PASSPHRASE_ENV,
+    PLAINTEXT_WARNING,
+    encrypted_identity_payload,
+    load_agent_from_identity,
+    plaintext_identity_payload,
+)
 from agentveil_mcp_proxy.policy import (
     PROXY_CONFIG_SCHEMA_VERSION,
     PolicyConfig,
@@ -37,6 +52,8 @@ from agentveil_mcp_proxy.runtime_gate import RuntimeGateClient
 DEFAULT_BASE_URL = "https://agentveil.dev"
 DEFAULT_AGENT_NAME = "agentveil-mcp-proxy"
 DEFAULT_CONTROL_GRANT_TTL_DAYS = 30
+CONTROL_GRANT_EXPIRY_WARNING_DAYS = 7
+REISSUE_GRANT_FORCE_THRESHOLD_SECONDS = 24 * 60 * 60
 DEFAULT_ALLOWED_CATEGORIES = ("mcp_proxy",)
 AGENTVEIL_DEV_SIGNER_DIDS = (
     "did:key:z6MkkvQQ9SxaNX9eEVHd5NtEamVY3YiZSpHZE567Vxs5jQQ3",
@@ -118,6 +135,16 @@ class InitResult:
     control_grant_expires_at: str
 
 
+@dataclass(frozen=True)
+class ReissueGrantResult:
+    """Result of `agentveil-mcp-proxy reissue-grant`."""
+
+    agent_name: str
+    agent_did: str
+    control_grant_path: Path
+    control_grant_expires_at: str
+
+
 def default_home() -> Path:
     """Return the proxy home, respecting AVP_HOME for tests/advanced use."""
 
@@ -182,6 +209,93 @@ def _read_json(path: Path, label: str) -> dict[str, Any]:
     return data
 
 
+def _read_passphrase_file(path: Path) -> str:
+    try:
+        value = path.expanduser().read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ProxyCliError(f"passphrase file unavailable: {path}", exit_code=1) from exc
+    if not value:
+        raise ProxyCliError("passphrase file is empty")
+    return value
+
+
+def _explicit_passphrase(
+    *,
+    passphrase: str | None = None,
+    passphrase_file: Path | None = None,
+) -> str | None:
+    if passphrase is not None and passphrase_file is not None:
+        raise ProxyCliError("--passphrase and --passphrase-file cannot be combined")
+    if passphrase is not None:
+        if not passphrase:
+            raise ProxyCliError("passphrase must not be empty")
+        return passphrase
+    if passphrase_file is not None:
+        return _read_passphrase_file(passphrase_file)
+    env_value = os.environ.get(PASSPHRASE_ENV)
+    if env_value is not None:
+        if not env_value:
+            raise ProxyCliError(f"{PASSPHRASE_ENV} must not be empty")
+        return env_value
+    return None
+
+
+def _resolve_new_identity_passphrase(
+    *,
+    passphrase: str | None = None,
+    passphrase_file: Path | None = None,
+    plaintext: bool = False,
+) -> str | None:
+    if plaintext:
+        if passphrase is not None or passphrase_file is not None:
+            raise ProxyCliError("--plaintext cannot be combined with passphrase options")
+        return None
+
+    resolved = _explicit_passphrase(passphrase=passphrase, passphrase_file=passphrase_file)
+    if resolved is not None:
+        return resolved
+
+    if sys.stdin.isatty():
+        first = getpass.getpass("MCP proxy identity passphrase: ")
+        if not first:
+            raise ProxyCliError("passphrase must not be empty")
+        second = getpass.getpass("Confirm MCP proxy identity passphrase: ")
+        if first != second:
+            raise ProxyCliError("passphrases do not match")
+        return first
+
+    raise ProxyCliError(
+        "encrypted identity passphrase required; pass --passphrase, "
+        "--passphrase-file, set AVP_PROXY_PASSPHRASE, or use --plaintext to opt out",
+        exit_code=1,
+    )
+
+
+def _resolve_existing_identity_passphrase(
+    identity: Mapping[str, Any],
+    *,
+    passphrase: str | None = None,
+    passphrase_file: Path | None = None,
+) -> str | None:
+    if identity.get("encrypted") is not True:
+        return None
+    resolved = _explicit_passphrase(passphrase=passphrase, passphrase_file=passphrase_file)
+    if resolved is not None:
+        return resolved
+
+    if sys.stdin.isatty():
+        value = getpass.getpass("MCP proxy identity passphrase: ")
+        if not value:
+            raise ProxyCliError("passphrase must not be empty", exit_code=1)
+        return value
+
+    raise ProxyCliError(
+        "encrypted identity passphrase required; pass --passphrase, "
+        "--passphrase-file, or set AVP_PROXY_PASSPHRASE",
+        exit_code=1,
+    )
+
+
 def _owner_only(path: Path) -> bool:
     try:
         return (path.stat().st_mode & 0o777) == 0o600
@@ -197,19 +311,20 @@ def trusted_signers_for_base_url(base_url: str) -> tuple[str, ...]:
     return ()
 
 
-def _create_identity_payload(*, base_url: str, agent_name: str) -> tuple[dict[str, Any], AVPAgent]:
+def _create_identity_payload(
+    *,
+    base_url: str,
+    agent_name: str,
+    passphrase: str | None,
+    plaintext: bool,
+) -> tuple[dict[str, Any], AVPAgent]:
     signing_key = SigningKey.generate()
     agent = AVPAgent(base_url, bytes(signing_key), name=agent_name)
-    payload = {
-        "name": agent_name,
-        "did": agent.did,
-        "public_key_hex": agent.public_key_hex,
-        "registered": False,
-        "verified": False,
-        "base_url": base_url.rstrip("/"),
-        "private_key_hex": agent.private_key_hex,
-        "encrypted": False,
-    }
+    payload = (
+        plaintext_identity_payload(agent)
+        if plaintext
+        else encrypted_identity_payload(agent, passphrase or "")
+    )
     return payload, agent
 
 
@@ -298,6 +413,10 @@ def init_proxy(
     policy_pack: str = "default",
     ttl_days: int = DEFAULT_CONTROL_GRANT_TTL_DAYS,
     allowed_categories: Iterable[str] = DEFAULT_ALLOWED_CATEGORIES,
+    passphrase: str | None = None,
+    passphrase_file: Path | None = None,
+    plaintext: bool = False,
+    err: TextIO | None = None,
     force: bool = False,
 ) -> InitResult:
     """Create a local proxy identity, config, and control grant."""
@@ -322,10 +441,24 @@ def init_proxy(
             "no trusted signer DID configured; pass --trusted-signer-did for this AVP base URL",
         )
 
+    identity_passphrase = _resolve_new_identity_passphrase(
+        passphrase=passphrase,
+        passphrase_file=passphrase_file,
+        plaintext=plaintext,
+    )
+    if plaintext:
+        warning_out = err or sys.stderr
+        print(PLAINTEXT_WARNING, file=warning_out)
+
     _mkdir_private(paths.agents_dir)
     _mkdir_private(paths.proxy_dir)
 
-    identity_payload, agent = _create_identity_payload(base_url=base_url, agent_name=agent_name)
+    identity_payload, agent = _create_identity_payload(
+        base_url=base_url,
+        agent_name=agent_name,
+        passphrase=identity_passphrase,
+        plaintext=plaintext,
+    )
     control_grant = agent.issue_delegation_receipt(
         agent_did=agent.did,
         allowed_categories=list(categories),
@@ -366,10 +499,78 @@ def load_proxy_config(path: Path) -> ProxyConfig:
         raise ProxyCliError(f"proxy config invalid: {exc}", exit_code=1) from exc
 
 
+def _parse_grant_timestamp(grant: Mapping[str, Any], field: str) -> datetime:
+    value = grant.get(field)
+    if not isinstance(value, str):
+        raise DelegationInvalid(f"{field} must be a string")
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise DelegationInvalid(f"{field} is not ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)") from exc
+
+
+def _format_grant_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _control_grant_ttl_message(grant: Mapping[str, Any]) -> tuple[str, str] | None:
+    valid_until = _parse_grant_timestamp(grant, "validUntil")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    if valid_until <= now:
+        return ("FAIL", f"control grant expired at {_format_grant_timestamp(valid_until)}")
+    remaining = (valid_until - now).total_seconds()
+    if remaining <= CONTROL_GRANT_EXPIRY_WARNING_DAYS * 24 * 60 * 60:
+        days = max(1, math.ceil(remaining / (24 * 60 * 60)))
+        return (
+            "WARN",
+            "control grant expires in "
+            f"{days} days at {_format_grant_timestamp(valid_until)}; "
+            "run 'agentveil-mcp-proxy reissue-grant'",
+        )
+    return None
+
+
+def _verify_delegation_for_reissue(grant: Mapping[str, Any]) -> dict[str, Any]:
+    valid_from = _parse_grant_timestamp(grant, "validFrom")
+    valid_until = _parse_grant_timestamp(grant, "validUntil")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    verification_time = now
+    if verification_time > valid_until:
+        verification_time = valid_until - timedelta(seconds=1)
+    if verification_time < valid_from:
+        verification_time = valid_from
+    return verify_delegation(dict(grant), now=verification_time)
+
+
+def _load_proxy_agent(
+    *,
+    identity: Mapping[str, Any],
+    config: ProxyConfig,
+    passphrase: str | None,
+    timeout: float | None = None,
+) -> Any:
+    try:
+        return load_agent_from_identity(
+            identity,
+            base_url=config.avp.base_url,
+            agent_name=config.avp.agent_name,
+            passphrase=passphrase,
+            timeout=timeout,
+        )
+    except IdentityPassphraseRequired as exc:
+        raise ProxyCliError("encrypted identity - passphrase required", exit_code=1) from exc
+    except IdentityDecryptError as exc:
+        raise ProxyCliError("encrypted identity could not be decrypted", exit_code=1) from exc
+    except (IdentityInvalidError, IdentityError) as exc:
+        raise ProxyCliError("proxy identity invalid", exit_code=1) from exc
+
+
 def doctor_proxy(
     *,
     home: Path | None = None,
     config_path: Path | None = None,
+    passphrase: str | None = None,
+    passphrase_file: Path | None = None,
     out: TextIO | None = None,
 ) -> int:
     """Validate local proxy files without starting transport."""
@@ -384,6 +585,7 @@ def doctor_proxy(
         grant = _read_json(grant_path, "control grant")
 
         failures = []
+        warnings = []
         if not config.avp.trusted_signer_dids:
             failures.append("trusted signer DID set is empty")
         if not _owner_only(identity_path):
@@ -392,14 +594,44 @@ def doctor_proxy(
             failures.append(f"control grant permissions must be 0600: {grant_path}")
         if identity.get("did") is None:
             failures.append("agent identity missing DID")
+        identity_passphrase = None
+        try:
+            identity_passphrase = _resolve_existing_identity_passphrase(
+                identity,
+                passphrase=passphrase,
+                passphrase_file=passphrase_file,
+            )
+            agent = _load_proxy_agent(
+                identity=identity,
+                config=config,
+                passphrase=identity_passphrase,
+            )
+            if identity.get("did") and getattr(agent, "did", None) != identity["did"]:
+                failures.append("agent identity DID mismatch")
+        except ProxyCliError as exc:
+            failures.append(str(exc))
         try:
             verified = verify_delegation(grant)
             if identity.get("did") and verified.get("issuer") != identity["did"]:
                 failures.append("control grant issuer does not match proxy identity")
             if identity.get("did") and verified.get("subject") != identity["did"]:
                 failures.append("control grant subject does not match proxy identity")
+            ttl_message = _control_grant_ttl_message(grant)
+            if ttl_message is not None:
+                level, message = ttl_message
+                if level == "FAIL":
+                    failures.append(message)
+                else:
+                    warnings.append(message)
         except DelegationInvalid as exc:
-            failures.append(f"control grant invalid: {exc}")
+            try:
+                ttl_message = _control_grant_ttl_message(grant)
+            except DelegationInvalid:
+                ttl_message = None
+            if ttl_message is not None and ttl_message[0] == "FAIL":
+                failures.append(ttl_message[1])
+            else:
+                failures.append(f"control grant invalid: {exc}")
 
         if failures:
             for failure in failures:
@@ -410,16 +642,121 @@ def doctor_proxy(
         print(f"OK: identity {identity_path}", file=out)
         print(f"OK: control grant {grant_path}", file=out)
         print(f"OK: trusted signers {len(config.avp.trusted_signer_dids)}", file=out)
+        for warning in warnings:
+            print(f"WARN: {warning}", file=out)
         return 0
     except ProxyCliError as exc:
         print(f"FAIL: {exc}", file=out)
         return 1
 
 
+def _grant_scope_for_reissue(scope: Any) -> tuple[list[str], dict[str, Any] | None]:
+    if not isinstance(scope, list):
+        raise ProxyCliError("control grant scope invalid", exit_code=1)
+    categories = [
+        entry.get("value")
+        for entry in scope
+        if isinstance(entry, dict) and entry.get("predicate") == "allowed_category"
+    ]
+    if not categories or any(not isinstance(category, str) or not category for category in categories):
+        raise ProxyCliError("control grant allowed categories unavailable", exit_code=1)
+    max_spend_entries = [
+        entry for entry in scope if isinstance(entry, dict) and entry.get("predicate") == "max_spend"
+    ]
+    if len(max_spend_entries) > 1:
+        raise ProxyCliError("control grant max_spend scope unsupported", exit_code=1)
+    max_spend = None
+    if max_spend_entries:
+        entry = max_spend_entries[0]
+        max_spend = {
+            "currency": entry.get("currency"),
+            "amount": entry.get("amount"),
+        }
+    return categories, max_spend
+
+
+def reissue_grant(
+    *,
+    home: Path | None = None,
+    config_path: Path | None = None,
+    passphrase: str | None = None,
+    passphrase_file: Path | None = None,
+    ttl_days: int = DEFAULT_CONTROL_GRANT_TTL_DAYS,
+    force: bool = False,
+    auto: bool = False,
+    out: TextIO | None = None,
+) -> ReissueGrantResult:
+    """Issue a fresh control grant from the local proxy identity."""
+
+    if ttl_days <= 0:
+        raise ProxyCliError("--ttl-days must be positive")
+    out = out or sys.stdout
+    paths = proxy_paths(home, config_path)
+    config = load_proxy_config(paths.config_path)
+    identity_path = paths.identity_path(config.avp.agent_name)
+    grant_path = paths.control_grant_path(config.avp.agent_name)
+    identity = _read_json(identity_path, "agent identity")
+    grant = _read_json(grant_path, "control grant")
+    identity_passphrase = _resolve_existing_identity_passphrase(
+        identity,
+        passphrase=passphrase,
+        passphrase_file=passphrase_file,
+    )
+    agent = _load_proxy_agent(
+        identity=identity,
+        config=config,
+        passphrase=identity_passphrase,
+    )
+    try:
+        verified = _verify_delegation_for_reissue(grant)
+    except DelegationInvalid as exc:
+        raise ProxyCliError(f"control grant invalid: {exc}", exit_code=1) from exc
+
+    if verified.get("issuer") != agent.did or verified.get("subject") != agent.did:
+        raise ProxyCliError("control grant does not match proxy identity", exit_code=1)
+
+    valid_until = _parse_grant_timestamp(grant, "validUntil")
+    remaining = (valid_until - datetime.now(timezone.utc).replace(microsecond=0)).total_seconds()
+    if remaining > REISSUE_GRANT_FORCE_THRESHOLD_SECONDS and not force:
+        raise ProxyCliError(
+            "control grant has more than 24 hours remaining; pass --force to reissue now",
+            exit_code=1,
+        )
+
+    categories, max_spend = _grant_scope_for_reissue(verified.get("scope"))
+    new_grant = agent.issue_delegation_receipt(
+        agent_did=agent.did,
+        allowed_categories=categories,
+        valid_for=timedelta(days=ttl_days),
+        max_spend=max_spend,
+        purpose=str(verified.get("purpose") or "Local MCP proxy control grant"),
+    )
+    new_verified = verify_delegation(new_grant)
+    _secure_write_json(grant_path, new_grant, force=True)
+    expires_at = _format_grant_timestamp(new_verified["valid_until"])
+    if auto:
+        print(json.dumps({
+            "status": "reissued",
+            "control_grant": str(grant_path),
+            "expires_at": expires_at,
+        }, sort_keys=True), file=out)
+    else:
+        print(f"Control grant reissued: {grant_path}", file=out)
+        print(f"Control grant expires: {expires_at}", file=out)
+    return ReissueGrantResult(
+        agent_name=config.avp.agent_name,
+        agent_did=agent.did,
+        control_grant_path=grant_path,
+        control_grant_expires_at=expires_at,
+    )
+
+
 def run_proxy(
     *,
     home: Path | None = None,
     config_path: Path | None = None,
+    passphrase: str | None = None,
+    passphrase_file: Path | None = None,
     out: TextIO | None = None,
     client_in: TextIO | None = None,
     err: TextIO | None = None,
@@ -431,8 +768,21 @@ def run_proxy(
     err = err or sys.stderr
     paths = proxy_paths(home, config_path)
     config = load_proxy_config(paths.config_path)
+    identity_path = paths.identity_path(config.avp.agent_name)
+    identity = _read_json(identity_path, "agent identity")
+    identity_passphrase = _resolve_existing_identity_passphrase(
+        identity,
+        passphrase=passphrase,
+        passphrase_file=passphrase_file,
+    )
+    _load_proxy_agent(identity=identity, config=config, passphrase=identity_passphrase)
     doctor_out = io.StringIO()
-    health = doctor_proxy(home=paths.home, config_path=paths.config_path, out=doctor_out)
+    health = doctor_proxy(
+        home=paths.home,
+        config_path=paths.config_path,
+        passphrase=identity_passphrase,
+        out=doctor_out,
+    )
     if health != 0:
         err.write(doctor_out.getvalue())
         err.flush()
@@ -440,13 +790,13 @@ def run_proxy(
     try:
         downstream = DownstreamConfig.from_proxy_config(config)
         classifier = ToolCallClassifier(config, server_name=downstream.name)
-        identity_path = paths.identity_path(config.avp.agent_name)
         control_grant_path = paths.control_grant_path(config.avp.agent_name)
         runtime_gate_factory = lambda: RuntimeGateClient.from_files(
             identity_path=identity_path,
             control_grant_path=control_grant_path,
             config=config,
             agent_cls=AVPAgent,
+            passphrase=identity_passphrase,
         )
         passthrough = McpPassthrough(
             downstream,
@@ -475,6 +825,11 @@ def _add_common_path_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", type=Path, default=None, help="Proxy config JSON path")
 
 
+def _add_passphrase_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--passphrase", default=None, help="MCP proxy identity passphrase")
+    parser.add_argument("--passphrase-file", type=Path, default=None, help="Read passphrase from file")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentveil-mcp-proxy")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -487,13 +842,24 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--policy-pack", default="default", choices=["default", "github", "filesystem", "shell"])
     init.add_argument("--ttl-days", type=int, default=DEFAULT_CONTROL_GRANT_TTL_DAYS)
     init.add_argument("--allowed-category", action="append", default=None)
+    _add_passphrase_args(init)
+    init.add_argument("--plaintext", action="store_true", help="Store the proxy private key unencrypted")
     init.add_argument("--force", action="store_true")
 
     doctor = subparsers.add_parser("doctor", help="Validate local proxy config and files")
     _add_common_path_args(doctor)
+    _add_passphrase_args(doctor)
 
     run = subparsers.add_parser("run", help="Run stdio MCP passthrough")
     _add_common_path_args(run)
+    _add_passphrase_args(run)
+
+    reissue = subparsers.add_parser("reissue-grant", help="Issue a fresh local control grant")
+    _add_common_path_args(reissue)
+    _add_passphrase_args(reissue)
+    reissue.add_argument("--ttl-days", type=int, default=DEFAULT_CONTROL_GRANT_TTL_DAYS)
+    reissue.add_argument("--force", action="store_true")
+    reissue.add_argument("--auto", action="store_true")
 
     return parser
 
@@ -512,6 +878,10 @@ def main(argv: list[str] | None = None) -> int:
                 policy_pack=args.policy_pack,
                 ttl_days=args.ttl_days,
                 allowed_categories=args.allowed_category or DEFAULT_ALLOWED_CATEGORIES,
+                passphrase=args.passphrase,
+                passphrase_file=args.passphrase_file,
+                plaintext=args.plaintext,
+                err=sys.stderr,
                 force=args.force,
             )
             print(f"Created MCP proxy identity: {result.agent_did}")
@@ -521,9 +891,30 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Control grant expires: {result.control_grant_expires_at}")
             return 0
         if args.command == "doctor":
-            return doctor_proxy(home=args.home, config_path=args.config)
+            return doctor_proxy(
+                home=args.home,
+                config_path=args.config,
+                passphrase=args.passphrase,
+                passphrase_file=args.passphrase_file,
+            )
         if args.command == "run":
-            return run_proxy(home=args.home, config_path=args.config)
+            return run_proxy(
+                home=args.home,
+                config_path=args.config,
+                passphrase=args.passphrase,
+                passphrase_file=args.passphrase_file,
+            )
+        if args.command == "reissue-grant":
+            reissue_grant(
+                home=args.home,
+                config_path=args.config,
+                passphrase=args.passphrase,
+                passphrase_file=args.passphrase_file,
+                ttl_days=args.ttl_days,
+                force=args.force,
+                auto=args.auto,
+            )
+            return 0
     except ProxyCliError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return exc.exit_code
