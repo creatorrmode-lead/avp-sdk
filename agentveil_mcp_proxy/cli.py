@@ -13,8 +13,10 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import sys
-from typing import Any, Iterable, TextIO
+import threading
+from typing import Any, Iterable, Mapping, TextIO
 
 from nacl.signing import SigningKey
 
@@ -48,6 +50,44 @@ class ProxyCliError(RuntimeError):
     def __init__(self, message: str, exit_code: int = 2):
         super().__init__(message)
         self.exit_code = exit_code
+
+
+class _RunProxySignalExit(Exception):
+    """Internal control-flow marker for graceful signal-driven shutdown."""
+
+
+def _install_run_proxy_signal_handlers(client_in: TextIO) -> dict[signal.Signals, Any]:
+    """Install temporary SIGTERM/SIGINT handlers for the active run_proxy call."""
+
+    if threading.current_thread() is not threading.main_thread():
+        return {}
+
+    previous: dict[signal.Signals, Any] = {}
+
+    def _shutdown_handler(signum: int, _frame: Any) -> None:
+        try:
+            client_in.close()
+        except Exception:
+            pass
+        raise _RunProxySignalExit(signum)
+
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        try:
+            previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, _shutdown_handler)
+        except (ValueError, OSError, RuntimeError):
+            previous.pop(signum, None)
+    return previous
+
+
+def _restore_signal_handlers(previous: Mapping[signal.Signals, Any]) -> None:
+    """Restore process-level signal handlers changed for run_proxy."""
+
+    for signum, handler in previous.items():
+        try:
+            signal.signal(signum, handler)
+        except (ValueError, OSError, RuntimeError):
+            continue
 
 
 @dataclass(frozen=True)
@@ -408,11 +448,18 @@ def run_proxy(
             config=config,
             agent_cls=AVPAgent,
         )
-        return McpPassthrough(
+        passthrough = McpPassthrough(
             downstream,
             classifier=classifier,
             runtime_gate_factory=runtime_gate_factory,
-        ).run_stdio(client_in, out)
+        )
+        previous_handlers = _install_run_proxy_signal_handlers(client_in)
+        try:
+            return passthrough.run_stdio(client_in, out)
+        except _RunProxySignalExit:
+            return 0
+        finally:
+            _restore_signal_handlers(previous_handlers)
     except PassthroughError as exc:
         raise ProxyCliError(str(exc), exit_code=1) from exc
 

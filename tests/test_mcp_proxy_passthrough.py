@@ -10,6 +10,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -250,6 +251,52 @@ for line in sys.stdin:
     return script
 
 
+def _multiline_downstream(tmp_path: Path) -> Path:
+    script = tmp_path / "multiline_downstream.py"
+    script.write_text(
+        """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "id": msg["id"],
+        "result": {"ok": True, "format": "pretty"},
+    }, indent=2), flush=True)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return script
+
+
+def _oversized_downstream(tmp_path: Path) -> Path:
+    script = tmp_path / "oversized_downstream.py"
+    script.write_text(
+        """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    payload = {
+        "jsonrpc": "2.0",
+        "id": msg["id"],
+        "result": {"blob": "x" * (1024 * 1024 + 1)},
+    }
+    sys.stdout.write(json.dumps(payload))
+    sys.stdout.flush()
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return script
+
+
 def _ungraceful_child_downstream(tmp_path: Path) -> Path:
     script = tmp_path / "ungraceful_child_downstream.py"
     script.write_text(
@@ -292,6 +339,27 @@ passthrough.start()
 ready_file.write_text(str(os.getpid()), encoding="utf-8")
 while True:
     time.sleep(1)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return script
+
+
+def _graceful_proxy_parent(tmp_path: Path) -> Path:
+    script = tmp_path / "graceful_proxy_parent.py"
+    script.write_text(
+        f"""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+
+from agentveil_mcp_proxy.cli import run_proxy
+
+home = Path(sys.argv[1])
+ready_file = Path(sys.argv[2])
+ready_file.write_text("ready", encoding="utf-8")
+raise SystemExit(run_proxy(home=home))
 """.lstrip(),
         encoding="utf-8",
     )
@@ -489,14 +557,23 @@ def test_downstream_async_notification_is_forwarded_without_pending_request(tmp_
         args=("-u", str(_startup_notification_downstream(tmp_path))),
         name="notify",
     ))
-    client_out = io.StringIO()
+    notification_seen = threading.Event()
 
-    def delayed_eof():
-        time.sleep(0.2)
+    class EventWriter(io.StringIO):
+        def write(self, value):
+            written = super().write(value)
+            if "notifications/tools/list_changed" in self.getvalue():
+                notification_seen.set()
+            return written
+
+    client_out = EventWriter()
+
+    def eof_after_notification():
+        assert notification_seen.wait(timeout=2.0)
         if False:
             yield ""
 
-    assert passthrough.run_stdio(delayed_eof(), client_out) == 0
+    assert passthrough.run_stdio(eof_after_notification(), client_out) == 0
     assert _responses(client_out.getvalue()) == [{
         "jsonrpc": "2.0",
         "method": "notifications/tools/list_changed",
@@ -628,6 +705,62 @@ def test_downstream_process_is_cleaned_up_on_client_eof(tmp_path):
     assert passthrough.process.poll() is not None
 
 
+def test_run_proxy_responds_to_sigterm_with_clean_shutdown(tmp_path):
+    if os.name == "nt":
+        pytest.skip("Windows termination semantics differ from POSIX SIGTERM")
+
+    home = tmp_path / "avp-home"
+    init = init_proxy(home=home, agent_name="proxy")
+    downstream_pid_file = tmp_path / "downstream.pid"
+    config = json.loads(init.config_path.read_text(encoding="utf-8"))
+    config["downstream"] = {
+        "name": "graceful-child",
+        "command": sys.executable,
+        "args": ["-u", str(_ungraceful_child_downstream(tmp_path)), str(downstream_pid_file)],
+    }
+    _write_json(init.config_path, config)
+
+    ready_file = tmp_path / "proxy.ready"
+    proxy_script = _graceful_proxy_parent(tmp_path)
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(proxy_script), str(home), str(ready_file)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    downstream_pid: int | None = None
+    try:
+        _wait_for_file(ready_file)
+        downstream_pid = int(_wait_for_file(downstream_pid_file))
+        assert _process_is_running(downstream_pid)
+
+        proc.terminate()
+        proc.wait(timeout=3.0)
+
+        assert proc.returncode == 0
+        assert _wait_for_process_exit(downstream_pid, timeout=2.0)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2.0)
+        if downstream_pid is not None and _process_is_running(downstream_pid):
+            os.kill(downstream_pid, signal.SIGKILL)
+
+
+def test_signal_handlers_are_restored_after_run_proxy(tmp_path):
+    home = tmp_path / "avp-home"
+    init = init_proxy(home=home, agent_name="proxy")
+    _set_downstream(init.config_path, _idle_downstream(tmp_path))
+    before_term = signal.getsignal(signal.SIGTERM)
+    before_int = signal.getsignal(signal.SIGINT)
+
+    assert run_proxy(home=home, client_in=io.StringIO(""), out=io.StringIO()) == 0
+
+    assert signal.getsignal(signal.SIGTERM) == before_term
+    assert signal.getsignal(signal.SIGINT) == before_int
+
+
 def test_downstream_dies_when_proxy_is_killed_ungracefully(tmp_path):
     if sys.platform == "darwin":
         pytest.skip(
@@ -685,6 +818,55 @@ def test_downstream_starts_in_own_process_group_on_posix(tmp_path):
         passthrough.start()
         assert passthrough.process is not None
         assert os.getpgid(passthrough.process.pid) == passthrough.process.pid
+    finally:
+        passthrough.stop()
+
+
+def test_multiline_json_downstream_response_is_parsed_correctly(tmp_path):
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_multiline_downstream(tmp_path))),
+        name="multiline",
+    ))
+    client_out = io.StringIO()
+
+    assert passthrough.run_stdio(
+        io.StringIO(_json_line({"jsonrpc": "2.0", "id": "pretty-1", "method": "tools/list"})),
+        client_out,
+    ) == 0
+
+    assert _responses(client_out.getvalue()) == [{
+        "jsonrpc": "2.0",
+        "id": "pretty-1",
+        "result": {"ok": True, "format": "pretty"},
+    }]
+
+
+def test_oversized_downstream_response_is_rejected_safely(tmp_path):
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_oversized_downstream(tmp_path))),
+        name="oversized",
+        response_timeout_seconds=2.0,
+    ))
+    try:
+        passthrough.start()
+        start = time.monotonic()
+        response = passthrough.handle_client_line(_json_line({
+            "jsonrpc": "2.0",
+            "id": "large-1",
+            "method": "tools/list",
+            "params": {"token": SECRET},
+        }))[0]
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0
+        assert response["id"] == "large-1"
+        assert response["error"]["code"] == -32000
+        assert response["error"]["message"] == "downstream MCP server unavailable"
+        rendered = json.dumps(response)
+        assert SECRET not in rendered
+        assert "blob" not in rendered
     finally:
         passthrough.stop()
 

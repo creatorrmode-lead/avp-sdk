@@ -18,6 +18,7 @@ Lifecycle behavior by platform:
 
 from __future__ import annotations
 
+import codecs
 from collections import deque
 import ctypes
 from dataclasses import dataclass
@@ -55,6 +56,7 @@ JSONRPC_RUNTIME_GATE_UNAVAILABLE = -32012
 JSONRPC_RUNTIME_GATE_UNTRUSTED = -32013
 JSONRPC_DOWNSTREAM_TIMEOUT = -32014
 DEFAULT_DOWNSTREAM_RESPONSE_TIMEOUT_SECONDS = 30.0
+MAX_DOWNSTREAM_MESSAGE_BYTES = 1 * 1024 * 1024
 SAFE_ENV_KEYS = (
     "PATH",
     "HOME",
@@ -711,39 +713,100 @@ class McpPassthrough:
             self._set_downstream_error(PassthroughError("downstream stdout unavailable"))
             return
 
+        byte_stream = getattr(proc.stdout, "buffer", None)
+        if byte_stream is None:
+            self._set_downstream_error(PassthroughError("downstream stdout unavailable"))
+            return
+
+        text_decoder = codecs.getincrementaldecoder("utf-8")()
+        json_decoder = json.JSONDecoder()
+        buffer = ""
+        read_chunk = getattr(byte_stream, "read1", byte_stream.read)
+
         while True:
             try:
-                raw_line = proc.stdout.readline()
+                chunk = read_chunk(4096)
             except OSError as exc:
                 if not self._stopping:
                     self._set_downstream_error(PassthroughError("downstream read failed"))
                 return
-            if raw_line == "":
+            if not chunk:
+                try:
+                    tail = text_decoder.decode(b"", final=True)
+                except UnicodeDecodeError:
+                    self._set_downstream_error(PassthroughError("downstream sent invalid UTF-8"))
+                    return
+                if tail:
+                    buffer += tail
+                    if self._downstream_buffer_too_large(buffer):
+                        self._set_downstream_error(
+                            PassthroughError("downstream response exceeds maximum size")
+                        )
+                        return
+                    try:
+                        buffer = self._drain_downstream_buffer(buffer, json_decoder)
+                    except PassthroughError as exc:
+                        self._set_downstream_error(exc)
+                        return
+                if buffer.strip():
+                    self._set_downstream_error(PassthroughError("downstream sent invalid JSON"))
+                    return
                 if not self._stopping and proc.poll() is not None:
                     self._set_downstream_error(PassthroughError("downstream process exited"))
                 elif not self._stopping:
                     self._set_downstream_error(PassthroughError("downstream closed stdout"))
                 return
+
             try:
-                response = json.loads(raw_line)
-            except json.JSONDecodeError as exc:
-                self._set_downstream_error(PassthroughError("downstream sent invalid JSON"))
+                buffer += text_decoder.decode(chunk, final=False)
+            except UnicodeDecodeError:
+                self._set_downstream_error(PassthroughError("downstream sent invalid UTF-8"))
                 return
-            if not isinstance(response, dict):
-                self._set_downstream_error(PassthroughError("downstream sent non-object JSON"))
+
+            if self._downstream_buffer_too_large(buffer):
+                self._set_downstream_error(
+                    PassthroughError("downstream response exceeds maximum size")
+                )
                 return
-            if self._is_server_notification(response):
-                if self._notification_writer is not None:
-                    self._notification_writer(response)
-                continue
-            if "id" in response:
-                with self._stdout_condition:
-                    response_key = self._id_key(response.get("id"))
-                    if response_key in self._timed_out_response_ids:
-                        self._timed_out_response_ids.remove(response_key)
-                        continue
-                    self._responses.setdefault(response_key, []).append(response)
-                    self._stdout_condition.notify_all()
+
+            try:
+                buffer = self._drain_downstream_buffer(buffer, json_decoder)
+            except PassthroughError as exc:
+                self._set_downstream_error(exc)
+                return
+
+    def _drain_downstream_buffer(self, buffer: str, decoder: json.JSONDecoder) -> str:
+        while True:
+            stripped = buffer.lstrip()
+            if not stripped:
+                return ""
+            if stripped[0] != "{":
+                raise PassthroughError("downstream sent invalid JSON")
+            try:
+                response, offset = decoder.raw_decode(stripped)
+            except json.JSONDecodeError:
+                return buffer
+            self._handle_downstream_message(response)
+            buffer = stripped[offset:]
+
+    def _handle_downstream_message(self, response: Any) -> None:
+        if not isinstance(response, dict):
+            raise PassthroughError("downstream sent non-object JSON")
+        if self._is_server_notification(response):
+            if self._notification_writer is not None:
+                self._notification_writer(response)
+            return
+        if "id" in response:
+            with self._stdout_condition:
+                response_key = self._id_key(response.get("id"))
+                if response_key in self._timed_out_response_ids:
+                    self._timed_out_response_ids.remove(response_key)
+                    return
+                self._responses.setdefault(response_key, []).append(response)
+                self._stdout_condition.notify_all()
+
+    def _downstream_buffer_too_large(self, buffer: str) -> bool:
+        return len(buffer.encode("utf-8", errors="replace")) > MAX_DOWNSTREAM_MESSAGE_BYTES
 
     def _write_client(self, client_out: TextIO, message: Mapping[str, Any]) -> None:
         with self._write_lock:

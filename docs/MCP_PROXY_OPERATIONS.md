@@ -32,3 +32,11 @@ Example:
 
 On timeout, the proxy returns a sanitized JSON-RPC error to the client and keeps
 the downstream process running so later requests can continue.
+
+## Downstream Response Size And Framing
+
+The proxy accepts downstream JSON-RPC responses as UTF-8 JSON objects on stdout,
+including pretty-printed objects that span multiple lines. Each downstream
+message is bounded to 1 MiB. If a downstream response exceeds that limit or is
+not a JSON object, the proxy returns a sanitized downstream-unavailable error to
+the client and does not include response content in logs or client output.
