@@ -57,6 +57,73 @@ storage is available only through the explicit `--plaintext` opt-out on `init`;
 the command prints a warning because the private key is then protected only by
 local file permissions.
 
+### Migrate Existing Plaintext Identity
+
+Do not use `agentveil-mcp-proxy init --force` to migrate an existing plaintext
+identity. `init --force` creates a new DID, which changes the proxy identity
+used for AVP reputation, receipts, and local control grants.
+
+To preserve the existing DID, stop the proxy and re-wrap the current identity
+file with a passphrase:
+
+```bash
+export AVP_HOME="${AVP_HOME:-$HOME/.avp}"
+export PASSPHRASE_FILE="/run/secrets/avp-proxy-passphrase"
+cp -p "$AVP_HOME/agents/agentveil-mcp-proxy.json" \
+  "$AVP_HOME/agents/agentveil-mcp-proxy.json.plaintext-backup-$(date +%Y%m%d%H%M%S)"
+
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+from agentveil.agent import AVPAgent
+from agentveil_mcp_proxy.identity import encrypted_identity_payload
+
+home = Path(os.environ.get("AVP_HOME", "~/.avp")).expanduser()
+config_path = home / "mcp-proxy" / "config.json"
+config = json.loads(config_path.read_text(encoding="utf-8"))
+agent_name = config["avp"]["agent_name"]
+base_url = config["avp"]["base_url"]
+identity_path = home / "agents" / f"{agent_name}.json"
+identity = json.loads(identity_path.read_text(encoding="utf-8"))
+
+if identity.get("encrypted") is True:
+    raise SystemExit("identity is already encrypted")
+private_key_hex = identity.get("private_key_hex")
+if not isinstance(private_key_hex, str) or not private_key_hex:
+    raise SystemExit("plaintext private_key_hex is missing")
+
+passphrase_path = Path(os.environ["PASSPHRASE_FILE"])
+passphrase = passphrase_path.read_text(encoding="utf-8").strip()
+if not passphrase:
+    raise SystemExit("passphrase file is empty")
+
+agent = AVPAgent(base_url, bytes.fromhex(private_key_hex), name=agent_name)
+if agent.did != identity.get("did"):
+    raise SystemExit("identity DID mismatch; refusing to rewrite")
+
+encrypted = encrypted_identity_payload(agent, passphrase)
+encrypted["registered"] = bool(identity.get("registered", False))
+encrypted["verified"] = bool(identity.get("verified", False))
+
+tmp_path = identity_path.with_name(f".{identity_path.name}.tmp")
+flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+with os.fdopen(os.open(tmp_path, flags, 0o600), "w", encoding="utf-8") as fh:
+    json.dump(encrypted, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+os.replace(tmp_path, identity_path)
+os.chmod(identity_path, 0o600)
+print(f"migrated identity {agent.did} at {identity_path}")
+PY
+
+agentveil-mcp-proxy doctor --passphrase-file "$PASSPHRASE_FILE"
+```
+
+Keep the backup only long enough to verify the proxy can run with the encrypted
+identity. Store or destroy the backup according to your local key-handling
+policy; it contains the plaintext private key.
+
 ## Control Grant Lifecycle
 
 The local control grant defaults to a 30-day TTL. `doctor` warns when the grant
