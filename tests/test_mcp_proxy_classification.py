@@ -10,6 +10,7 @@ from agentveil_mcp_proxy.classification import (
     HASH_PREFIX,
     REDACTED,
     ToolCallClassifier,
+    extract_resource,
     infer_risk_class,
     sha256_jcs,
 )
@@ -17,7 +18,7 @@ from agentveil_mcp_proxy.passthrough import DownstreamConfig, McpPassthrough
 from agentveil_mcp_proxy.policy import PolicyDecision, ProxyConfig, RiskClass, builtin_policy_pack
 
 
-SECRET = "SECRET_PROJECT_ALPHA"
+SECRET = "SECRET_PROJECT_INTERNAL"
 
 
 def _json_line(message: dict) -> str:
@@ -177,6 +178,31 @@ def test_privacy_modes_control_action_and_resource_representation():
     assert metadata["action_hash"] == hashed.action_hash
     assert metadata["resource_hash"] is None
     assert metadata["payload_hash"].startswith(HASH_PREFIX)
+
+
+def test_extract_resource_priority_order_is_stable():
+    cases = [
+        ({"owner": "acme", "repo": "foo"}, "github:acme/foo"),
+        ({"owner": "acme", "repository": "foo"}, "github:acme/foo"),
+        ({"owner": "acme", "repo": "foo", "path": "/some/file"}, "github:acme/foo"),
+        ({"resource": "x", "uri": "y", "path": "z"}, "resource:x"),
+        ({"uri": "x", "url": "y", "path": "z"}, "uri:x"),
+        ({"path": "/etc/passwd", "branch": "main"}, "path:/etc/passwd"),
+        ({"branch": "main", "issue_number": 42}, "branch:main"),
+        ({"resource": "", "path": "/foo"}, "path:/foo"),
+        ({"issue_number": 42}, "issue_number:42"),
+        ({"resource": True}, None),
+        ({}, None),
+        ({"unknown_key": "value"}, None),
+    ]
+
+    for arguments, expected in cases:
+        assert extract_resource(arguments) == expected
+
+
+def test_extract_resource_does_not_recognize_repo_alone_as_combo():
+    assert extract_resource({"repo": "foo"}) == "repo:foo"
+    assert extract_resource({"owner": "acme"}) is None
 
 
 def test_risk_inference_covers_core_vocab():
