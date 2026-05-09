@@ -262,6 +262,24 @@ def test_malformed_hot_reload_keeps_last_good_policy_and_emits_event():
     assert runtime.events[-1]["type"] == "policy_reload_applied"
 
 
+def test_runtime_events_buffer_is_bounded_and_drops_oldest():
+    good = ProxyConfig.from_dict(_base_config())
+    runtime = PolicyRuntime(good, max_events=3)
+
+    bad = _base_config()
+    bad["policy"] = dict(bad["policy"])
+    bad["policy"]["rules"] = [{"id": "bad", "decision": "permit"}]
+
+    for _ in range(5):
+        runtime.reload_from_dict(bad)
+
+    assert len(runtime.events) == 3
+    assert all(event["type"] == "policy_reload_failed" for event in runtime.events)
+
+    with pytest.raises(ValueError, match="max_events must be positive"):
+        PolicyRuntime(good, max_events=0)
+
+
 def test_policy_context_hash_is_stable_and_metadata_only():
     a = policy_context_hash(
         policy_id="p",

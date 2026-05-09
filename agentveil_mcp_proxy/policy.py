@@ -7,18 +7,20 @@ source code.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 import fnmatch
 import hashlib
 from types import MappingProxyType
-from typing import Any, Mapping, Sequence
+from typing import Any, Deque, Mapping, Sequence
 
 import jcs
 
 
 PROXY_CONFIG_SCHEMA_VERSION = 1
 POLICY_SCHEMA_VERSION = 1
+MAX_RUNTIME_EVENTS = 1000
 
 
 class ProxyConfigError(ValueError):
@@ -593,11 +595,18 @@ class PolicyReloadResult:
 
 
 class PolicyRuntime:
-    """Hold last-good config and apply hot reloads fail-safe."""
+    """Hold last-good config and apply hot reloads fail-safe.
 
-    def __init__(self, config: ProxyConfig):
+    The events buffer is bounded with FIFO drop-oldest semantics so a long-running
+    proxy cannot leak memory through unbounded event accumulation. P7 will add a
+    persistent evidence store; until then the in-process buffer is capped.
+    """
+
+    def __init__(self, config: ProxyConfig, *, max_events: int = MAX_RUNTIME_EVENTS):
+        if max_events <= 0:
+            raise ValueError("max_events must be positive")
         self.config = config
-        self.events: list[Mapping[str, Any]] = []
+        self.events: Deque[Mapping[str, Any]] = deque(maxlen=max_events)
 
     def reload_from_dict(self, data: Mapping[str, Any]) -> PolicyReloadResult:
         try:
@@ -737,6 +746,7 @@ __all__ = [
     "PolicyRule",
     "PolicyRuntime",
     "PrivacyConfig",
+    "MAX_RUNTIME_EVENTS",
     "PROXY_CONFIG_SCHEMA_VERSION",
     "POLICY_SCHEMA_VERSION",
     "ProxyConfig",

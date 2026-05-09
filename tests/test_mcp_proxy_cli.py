@@ -177,6 +177,48 @@ def test_run_does_not_start_without_trusted_signer_config(tmp_path):
         raise AssertionError("expected run to refuse invalid trusted signer config")
 
 
+def test_doctor_fails_on_tampered_grant_signature(tmp_path):
+    home = tmp_path / "avp-home"
+    result = init_proxy(home=home, agent_name="proxy")
+    private_key = _load(result.identity_path)["private_key_hex"]
+
+    grant = _load(result.control_grant_path)
+    grant["credentialSubject"]["purpose"] = "Tampered purpose breaks signature"
+    result.control_grant_path.write_text(json.dumps(grant), encoding="utf-8")
+    os.chmod(result.control_grant_path, 0o600)
+
+    out = io.StringIO()
+    code = doctor_proxy(home=home, out=out)
+
+    assert code == 1
+    output = out.getvalue()
+    assert "control grant invalid" in output
+    assert "signature verification failed" in output
+    assert private_key not in output
+
+
+def test_doctor_fails_on_swapped_issuer_did(tmp_path):
+    home = tmp_path / "avp-home"
+    result = init_proxy(home=home, agent_name="proxy")
+    private_key = _load(result.identity_path)["private_key_hex"]
+
+    identity = _load(result.identity_path)
+    swapped_did = "did:key:z6MkSwappedSignerForDoctorMismatchTest"
+    assert identity["did"] != swapped_did
+    identity["did"] = swapped_did
+    result.identity_path.write_text(json.dumps(identity), encoding="utf-8")
+    os.chmod(result.identity_path, 0o600)
+
+    out = io.StringIO()
+    code = doctor_proxy(home=home, out=out)
+
+    assert code == 1
+    output = out.getvalue()
+    assert "control grant issuer does not match proxy identity" in output
+    assert "control grant subject does not match proxy identity" in output
+    assert private_key not in output
+
+
 def test_main_init_doctor_and_run_exit_codes(tmp_path, capsys):
     home = tmp_path / "avp-home"
 
