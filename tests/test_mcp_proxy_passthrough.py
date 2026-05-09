@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import ctypes
 import io
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 import time
 
+import pytest
+
 import agentveil_mcp_proxy.cli as proxy_cli
 from agentveil_mcp_proxy.cli import ProxyCliError, init_proxy, run_proxy
-from agentveil_mcp_proxy.passthrough import DownstreamConfig, McpPassthrough
+from agentveil_mcp_proxy.policy import ProxyConfig
+from agentveil_mcp_proxy.passthrough import (
+    JSONRPC_DOWNSTREAM_TIMEOUT,
+    DownstreamConfig,
+    McpPassthrough,
+)
 
 
 SECRET = "SECRET_DOWNSTREAM_TOKEN"
@@ -212,6 +222,128 @@ time.sleep(30)
         encoding="utf-8",
     )
     return script
+
+
+def _slow_downstream(tmp_path: Path) -> Path:
+    script = tmp_path / "slow_downstream.py"
+    script.write_text(
+        """
+import json
+import sys
+import time
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    params = msg.get("params") or {}
+    if params.get("sleep"):
+        time.sleep(2.0)
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "id": msg["id"],
+        "result": {"ok": True, "method": msg.get("method")},
+    }), flush=True)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return script
+
+
+def _ungraceful_child_downstream(tmp_path: Path) -> Path:
+    script = tmp_path / "ungraceful_child_downstream.py"
+    script.write_text(
+        """
+from pathlib import Path
+import os
+import sys
+import time
+
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="utf-8")
+while True:
+    time.sleep(1)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return script
+
+
+def _ungraceful_proxy_parent(tmp_path: Path, downstream_script: Path) -> Path:
+    script = tmp_path / "ungraceful_proxy_parent.py"
+    script.write_text(
+        f"""
+from pathlib import Path
+import os
+import sys
+import time
+
+sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+
+from agentveil_mcp_proxy.passthrough import DownstreamConfig, McpPassthrough
+
+pid_file = Path(sys.argv[1])
+ready_file = Path(sys.argv[2])
+passthrough = McpPassthrough(DownstreamConfig(
+    command=sys.executable,
+    args=("-u", {str(downstream_script)!r}, str(pid_file)),
+    name="ungraceful-child",
+))
+passthrough.start()
+ready_file.write_text(str(os.getpid()), encoding="utf-8")
+while True:
+    time.sleep(1)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return script
+
+
+def _wait_for_file(path: Path, timeout: float = 2.0) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            value = ""
+        if value:
+            return value
+        time.sleep(0.02)
+    raise AssertionError(f"timed out waiting for {path}")
+
+
+def _process_is_running(pid: int) -> bool:
+    if os.name == "nt":
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_int
+        handle = kernel32.OpenProcess(0x00100000, False, pid)
+        if not handle:
+            return False
+        try:
+            status = kernel32.WaitForSingleObject(handle, 0)
+            return status == 0x00000102
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_process_exit(pid: int, timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _process_is_running(pid):
+            return True
+        time.sleep(0.05)
+    return not _process_is_running(pid)
 
 
 def test_run_mirrors_initialize_initialized_and_tools_list(tmp_path):
@@ -496,6 +628,51 @@ def test_downstream_process_is_cleaned_up_on_client_eof(tmp_path):
     assert passthrough.process.poll() is not None
 
 
+def test_downstream_dies_when_proxy_is_killed_ungracefully(tmp_path):
+    if sys.platform == "darwin":
+        pytest.skip(
+            "macOS ungraceful proxy termination requires an external supervisor"
+        )
+
+    downstream_pid_file = tmp_path / "downstream.pid"
+    ready_file = tmp_path / "proxy.ready"
+    downstream_script = _ungraceful_child_downstream(tmp_path)
+    proxy_script = _ungraceful_proxy_parent(tmp_path, downstream_script)
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(proxy_script), str(downstream_pid_file), str(ready_file)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    downstream_pid: int | None = None
+    try:
+        _wait_for_file(ready_file)
+        downstream_pid = int(_wait_for_file(downstream_pid_file))
+        assert _process_is_running(downstream_pid)
+
+        if os.name == "nt":
+            proc.kill()
+        else:
+            os.kill(proc.pid, signal.SIGKILL)
+        proc.wait(timeout=2.0)
+
+        assert _wait_for_process_exit(downstream_pid, timeout=2.0)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2.0)
+        if downstream_pid is not None and _process_is_running(downstream_pid):
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(downstream_pid), "/T", "/F"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                os.kill(downstream_pid, signal.SIGKILL)
+
+
 def test_downstream_starts_in_own_process_group_on_posix(tmp_path):
     if os.name != "posix":
         return
@@ -508,6 +685,83 @@ def test_downstream_starts_in_own_process_group_on_posix(tmp_path):
         passthrough.start()
         assert passthrough.process is not None
         assert os.getpgid(passthrough.process.pid) == passthrough.process.pid
+    finally:
+        passthrough.stop()
+
+
+def test_downstream_response_timeout_returns_sanitized_error_and_continues(tmp_path):
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_slow_downstream(tmp_path))),
+        name="slow",
+        response_timeout_seconds=0.5,
+    ))
+    try:
+        passthrough.start()
+        start = time.monotonic()
+        timeout_response = passthrough.handle_client_line(_json_line({
+            "jsonrpc": "2.0",
+            "id": "slow-1",
+            "method": "tools/call",
+            "params": {"sleep": True, "arguments": {"token": SECRET}},
+        }))[0]
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0
+        assert timeout_response["id"] == "slow-1"
+        assert timeout_response["error"]["code"] == JSONRPC_DOWNSTREAM_TIMEOUT
+        assert timeout_response["error"]["message"] == "downstream MCP server response timed out"
+        assert timeout_response["error"]["data"] == {
+            "status": "timeout",
+            "reason": "downstream_response_timeout",
+        }
+        assert SECRET not in json.dumps(timeout_response)
+        assert passthrough.downstream_timeouts == 1
+        assert passthrough.process is not None
+        assert passthrough.process.poll() is None
+
+        time.sleep(2.2)
+        fast_response = passthrough.handle_client_line(_json_line({
+            "jsonrpc": "2.0",
+            "id": "fast-1",
+            "method": "tools/list",
+            "params": {},
+        }))[0]
+        assert fast_response == {
+            "jsonrpc": "2.0",
+            "id": "fast-1",
+            "result": {"ok": True, "method": "tools/list"},
+        }
+    finally:
+        passthrough.stop()
+
+
+def test_downstream_response_timeout_does_not_leak_request_data(tmp_path):
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_slow_downstream(tmp_path))),
+        name="slow",
+        response_timeout_seconds=0.5,
+    ))
+    try:
+        passthrough.start()
+        responses = passthrough.handle_client_line(_json_line({
+            "jsonrpc": "2.0",
+            "id": "secret-timeout",
+            "method": "tools/call",
+            "params": {
+                "sleep": True,
+                "arguments": {
+                    "prompt": f"never echo {SECRET}",
+                    "source_code": "print('sensitive')",
+                },
+            },
+        }))
+        rendered = json.dumps(responses)
+        assert responses[0]["error"]["code"] == JSONRPC_DOWNSTREAM_TIMEOUT
+        assert SECRET not in rendered
+        assert "source_code" not in rendered
+        assert "sensitive" not in rendered
     finally:
         passthrough.stop()
 
@@ -532,3 +786,19 @@ def test_downstream_config_rejects_unknown_fields(tmp_path):
         assert "stderr_log" in str(exc)
     else:
         raise AssertionError("expected downstream config validation failure")
+
+
+def test_downstream_config_accepts_response_timeout_seconds(tmp_path):
+    home = tmp_path / "avp-home"
+    init = init_proxy(home=home, agent_name="proxy")
+    config = json.loads(init.config_path.read_text(encoding="utf-8"))
+    config["downstream"] = {
+        "name": "timed",
+        "command": sys.executable,
+        "args": [],
+        "response_timeout_seconds": 0.5,
+    }
+    _write_json(init.config_path, config)
+
+    parsed = DownstreamConfig.from_proxy_config(ProxyConfig.from_dict(config))
+    assert parsed.response_timeout_seconds == 0.5

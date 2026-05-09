@@ -300,6 +300,7 @@ Negative attestations require both `context` and a 64-character lowercase hex
 | [Webhook Alerts](docs/WEBHOOKS.md) | Push notification setup |
 | [Protocol Spec](docs/PROTOCOL.md) | AgentVeil wire format and authentication |
 | [Security Model](docs/SECURITY_MODEL.md) | Mode 1 SDK developer flow, Mode 2/3 gateway enforcement roadmap |
+| [MCP Proxy Operations](docs/MCP_PROXY_OPERATIONS.md) | Downstream lifecycle behavior and response timeout configuration |
 | [Security Context](docs/SECURITY_CONTEXT.md) | Why agent trust matters — CVEs and market data |
 | [Agent Network (Advanced)](docs/ADVANCED_AGENT_NETWORK.md) | Reputation, attestations, agent identity — internal mechanisms |
 | [Changelog](CHANGELOG.md) | Version history |

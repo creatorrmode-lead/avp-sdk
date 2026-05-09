@@ -3,18 +3,33 @@
 P5 applies local policy to MCP ``tools/call`` requests and, for
 ``ask_backend``, calls AVP Runtime Gate before forwarding. Approval UI, WAL
 evidence, and circuit breaking remain future slices.
+
+Lifecycle behavior by platform:
+  - Linux: downstream starts in its own process group and receives SIGTERM via
+    ``prctl(PR_SET_PDEATHSIG)`` if the proxy process dies before ``stop()``.
+  - Windows: downstream is assigned to a Job Object configured with
+    ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` so the kernel terminates it when the
+    proxy process exits.
+  - macOS: graceful shutdown terminates the downstream process group, but a
+    force-killed proxy can leave downstream running. Run the proxy under
+    launchd or another supervisor when macOS ungraceful-termination cleanup is
+    required.
 """
 
 from __future__ import annotations
 
 from collections import deque
+import ctypes
 from dataclasses import dataclass
 import json
+import math
 import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import threading
+import time
 from typing import Any, Callable, Deque, Mapping, TextIO
 
 from agentveil_mcp_proxy.classification import ClassifiedToolCall, ToolCallClassifier
@@ -38,6 +53,8 @@ JSONRPC_POLICY_BLOCKED = -32010
 JSONRPC_APPROVAL_REQUIRED = -32011
 JSONRPC_RUNTIME_GATE_UNAVAILABLE = -32012
 JSONRPC_RUNTIME_GATE_UNTRUSTED = -32013
+JSONRPC_DOWNSTREAM_TIMEOUT = -32014
+DEFAULT_DOWNSTREAM_RESPONSE_TIMEOUT_SECONDS = 30.0
 SAFE_ENV_KEYS = (
     "PATH",
     "HOME",
@@ -52,10 +69,120 @@ SAFE_ENV_KEYS = (
     "COMSPEC",
     "PATHEXT",
 )
+_LINUX_PR_SET_PDEATHSIG = 1
+_LINUX_LIBC = ctypes.CDLL(None, use_errno=True) if sys.platform.startswith("linux") else None
+
+
+def _linux_parent_death_preexec() -> None:
+    """Ask Linux to SIGTERM the child if the proxy process disappears."""
+
+    if _LINUX_LIBC is None:
+        return
+    result = _LINUX_LIBC.prctl(_LINUX_PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+    if result != 0:
+        errno = ctypes.get_errno()
+        raise OSError(errno, os.strerror(errno))
+    if os.getppid() == 1:
+        os.kill(os.getpid(), signal.SIGTERM)
+
+
+class _WindowsJobObject:
+    """Kill-on-close Windows Job Object wrapper for one downstream process."""
+
+    def __init__(self, process_handle: int):
+        if os.name != "nt":
+            raise RuntimeError("Windows Job Objects are only available on Windows")
+        self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self._kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        self._kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        self._kernel32.SetInformationJobObject.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+        ]
+        self._kernel32.SetInformationJobObject.restype = ctypes.c_int
+        self._kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        self._kernel32.AssignProcessToJobObject.restype = ctypes.c_int
+        self._kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        self._kernel32.CloseHandle.restype = ctypes.c_int
+        self._handle = self._create_job()
+        try:
+            self._configure_kill_on_close()
+            self._assign(process_handle)
+        except Exception:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        handle = self._handle
+        if handle:
+            self._handle = 0
+            self._kernel32.CloseHandle(handle)
+
+    def _create_job(self) -> int:
+        handle = self._kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return handle
+
+    def _configure_kill_on_close(self) -> None:
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = 0x00002000
+        ok = self._kernel32.SetInformationJobObject(
+            self._handle,
+            9,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def _assign(self, process_handle: int) -> None:
+        ok = self._kernel32.AssignProcessToJobObject(self._handle, process_handle)
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
 
 
 class PassthroughError(RuntimeError):
     """Raised for local MCP pass-through startup/runtime failures."""
+
+
+class DownstreamTimeoutError(PassthroughError):
+    """Raised when downstream stays alive but does not answer one request."""
 
 
 @dataclass(frozen=True)
@@ -67,6 +194,7 @@ class DownstreamConfig:
     name: str = "downstream"
     env: Mapping[str, str] | None = None
     env_passthrough: tuple[str, ...] = ()
+    response_timeout_seconds: float = DEFAULT_DOWNSTREAM_RESPONSE_TIMEOUT_SECONDS
 
     @classmethod
     def from_proxy_config(cls, config: ProxyConfig) -> "DownstreamConfig":
@@ -98,7 +226,26 @@ class DownstreamConfig:
         ):
             raise PassthroughError("downstream.env_passthrough must be a list of strings")
 
-        allowed = {"name", "command", "args", "env", "env_passthrough"}
+        response_timeout = data.get(
+            "response_timeout_seconds",
+            DEFAULT_DOWNSTREAM_RESPONSE_TIMEOUT_SECONDS,
+        )
+        if (
+            not isinstance(response_timeout, (int, float))
+            or isinstance(response_timeout, bool)
+            or not math.isfinite(response_timeout)
+            or response_timeout <= 0
+        ):
+            raise PassthroughError("downstream.response_timeout_seconds must be a positive number")
+
+        allowed = {
+            "name",
+            "command",
+            "args",
+            "env",
+            "env_passthrough",
+            "response_timeout_seconds",
+        }
         unknown = sorted(set(data) - allowed)
         if unknown:
             raise PassthroughError(f"downstream has unknown field(s): {', '.join(unknown)}")
@@ -109,6 +256,7 @@ class DownstreamConfig:
             name=name,
             env=env,
             env_passthrough=tuple(env_passthrough),
+            response_timeout_seconds=float(response_timeout),
         )
 
 
@@ -197,7 +345,10 @@ class McpPassthrough:
         self._classifier_errors = 0
         self._runtime_gate: Any | None = None
         self._runtime_gate_errors = 0
+        self._downstream_timeouts = 0
         self._security_events: Deque[Mapping[str, Any]] = deque(maxlen=1000)
+        self._timed_out_response_ids: set[str] = set()
+        self._windows_job: _WindowsJobObject | None = None
 
     @property
     def stderr_bytes_drained(self) -> int:
@@ -216,6 +367,12 @@ class McpPassthrough:
         """Number of Runtime Gate failures handled without leaking request data."""
 
         return self._runtime_gate_errors
+
+    @property
+    def downstream_timeouts(self) -> int:
+        """Number of downstream requests that timed out without leaking payload data."""
+
+        return self._downstream_timeouts
 
     @property
     def security_events(self) -> tuple[Mapping[str, Any], ...]:
@@ -240,6 +397,8 @@ class McpPassthrough:
             start_kwargs: dict[str, Any] = {}
             if os.name == "posix":
                 start_kwargs["start_new_session"] = True
+            if sys.platform.startswith("linux"):
+                start_kwargs["preexec_fn"] = _linux_parent_death_preexec
             self.process = subprocess.Popen(
                 [self.downstream.command, *self.downstream.args],
                 stdin=subprocess.PIPE,
@@ -252,7 +411,14 @@ class McpPassthrough:
                 env=env,
                 **start_kwargs,
             )
-        except OSError as exc:
+            if os.name == "nt":
+                self._windows_job = _WindowsJobObject(int(self.process._handle))
+        except (OSError, subprocess.SubprocessError) as exc:
+            if self.process is not None and self.process.poll() is None:
+                try:
+                    self.process.kill()
+                except OSError:
+                    pass
             raise PassthroughError("downstream startup failed") from exc
 
         self._stderr_thread = threading.Thread(
@@ -308,6 +474,9 @@ class McpPassthrough:
             self._stderr_thread.join(timeout=timeout)
         if self._stdout_thread:
             self._stdout_thread.join(timeout=timeout)
+        if self._windows_job is not None:
+            self._windows_job.close()
+            self._windows_job = None
 
     def run_stdio(self, client_in: TextIO, client_out: TextIO) -> int:
         """Run pass-through until client input EOF or a fatal startup error."""
@@ -350,6 +519,16 @@ class McpPassthrough:
             if not has_id:
                 return []
             return [self._wait_downstream_response(request_id)]
+        except DownstreamTimeoutError:
+            self._downstream_timeouts += 1
+            if not has_id:
+                return []
+            return [jsonrpc_error(
+                request_id,
+                JSONRPC_DOWNSTREAM_TIMEOUT,
+                "downstream MCP server response timed out",
+                data={"status": "timeout", "reason": "downstream_response_timeout"},
+            )]
         except PassthroughError:
             if not has_id:
                 return []
@@ -509,6 +688,7 @@ class McpPassthrough:
 
     def _wait_downstream_response(self, expected_id: Any) -> dict[str, Any]:
         response_key = self._id_key(expected_id)
+        deadline = time.monotonic() + self.downstream.response_timeout_seconds
         with self._stdout_condition:
             while True:
                 queued = self._responses.get(response_key)
@@ -519,7 +699,11 @@ class McpPassthrough:
                     return response
                 if self._downstream_error is not None:
                     raise self._downstream_error
-                self._stdout_condition.wait()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._timed_out_response_ids.add(response_key)
+                    raise DownstreamTimeoutError("downstream response timed out")
+                self._stdout_condition.wait(timeout=remaining)
 
     def _read_stdout(self) -> None:
         proc = self._require_process()
@@ -554,7 +738,11 @@ class McpPassthrough:
                 continue
             if "id" in response:
                 with self._stdout_condition:
-                    self._responses.setdefault(self._id_key(response.get("id")), []).append(response)
+                    response_key = self._id_key(response.get("id"))
+                    if response_key in self._timed_out_response_ids:
+                        self._timed_out_response_ids.remove(response_key)
+                        continue
+                    self._responses.setdefault(response_key, []).append(response)
                     self._stdout_condition.notify_all()
 
     def _write_client(self, client_out: TextIO, message: Mapping[str, Any]) -> None:
