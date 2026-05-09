@@ -188,6 +188,11 @@ def test_risk_inference_covers_core_vocab():
     assert infer_risk_class("custom.inspect", tool="custom_action") is RiskClass.UNKNOWN
 
 
+def test_risk_inference_does_not_over_classify_substring_collisions():
+    assert infer_risk_class("github.get_infrastructure", tool="get_infrastructure") is RiskClass.READ
+    assert infer_risk_class("github.list_endpoints", tool="list_endpoints") is RiskClass.READ
+
+
 def test_passthrough_classifies_tools_call_without_changing_downstream_behavior(tmp_path):
     classifier = ToolCallClassifier(_config(), server_name="github")
     seen = []

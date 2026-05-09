@@ -136,12 +136,19 @@ class McpPassthrough:
         self._stdout_condition = threading.Condition()
         self._notification_writer: Callable[[Mapping[str, Any]], None] | None = None
         self._write_lock = threading.Lock()
+        self._classifier_errors = 0
 
     @property
     def stderr_bytes_drained(self) -> int:
         """Number of downstream stderr bytes drained without echoing content."""
 
         return self._stderr_bytes
+
+    @property
+    def classifier_errors(self) -> int:
+        """Number of classifier/callback failures skipped without blocking passthrough."""
+
+        return self._classifier_errors
 
     def start(self) -> None:
         """Start the downstream MCP server subprocess."""
@@ -262,11 +269,7 @@ class McpPassthrough:
             return [jsonrpc_error(request_id, JSONRPC_INVALID_REQUEST, "invalid JSON-RPC request")]
 
         try:
-            classification = None
-            if self.classifier is not None:
-                classification = self.classifier.classify_jsonrpc(message)
-            if classification is not None and self.on_tool_call is not None:
-                self.on_tool_call(classification)
+            self._classify_for_local_metadata(message)
             self._send_downstream(message)
             if not has_id:
                 return []
@@ -279,6 +282,18 @@ class McpPassthrough:
                 JSONRPC_DOWNSTREAM_ERROR,
                 "downstream MCP server unavailable",
             )]
+
+    def _classify_for_local_metadata(self, message: Mapping[str, Any]) -> None:
+        if self.classifier is None:
+            return
+        try:
+            classification = self.classifier.classify_jsonrpc(message)
+            if classification is not None and self.on_tool_call is not None:
+                self.on_tool_call(classification)
+        except Exception:
+            # P4 classification is advisory only. Future evidence slices can
+            # consume this counter without logging sensitive request content.
+            self._classifier_errors += 1
 
     def _send_downstream(self, message: Mapping[str, Any]) -> None:
         proc = self._require_process()

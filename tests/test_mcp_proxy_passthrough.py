@@ -345,6 +345,76 @@ def test_downstream_async_notification_is_forwarded_without_pending_request(tmp_
     }]
 
 
+def test_classifier_exception_does_not_break_passthrough(tmp_path):
+    class ExplodingClassifier:
+        def classify_jsonrpc(self, message):
+            raise RuntimeError("boom")
+
+    passthrough = McpPassthrough(
+        DownstreamConfig(
+            command=sys.executable,
+            args=("-u", str(_normal_downstream(tmp_path))),
+            name="fake-downstream",
+        ),
+        classifier=ExplodingClassifier(),
+    )
+    client_out = io.StringIO()
+
+    assert passthrough.run_stdio(
+        io.StringIO(_json_line({
+            "jsonrpc": "2.0",
+            "id": "call-1",
+            "method": "tools/call",
+            "params": {"name": "read_file", "arguments": {"path": "/tmp/a.txt"}},
+        })),
+        client_out,
+    ) == 0
+
+    assert _responses(client_out.getvalue()) == [{
+        "jsonrpc": "2.0",
+        "id": "call-1",
+        "result": {"content": [{"type": "text", "text": "called"}]},
+    }]
+    assert passthrough.classifier_errors == 1
+
+
+def test_classifier_callback_exception_does_not_break_passthrough(tmp_path):
+    class StaticClassifier:
+        def classify_jsonrpc(self, message):
+            return object()
+
+    def exploding_callback(classification):
+        raise RuntimeError("boom")
+
+    passthrough = McpPassthrough(
+        DownstreamConfig(
+            command=sys.executable,
+            args=("-u", str(_normal_downstream(tmp_path))),
+            name="fake-downstream",
+        ),
+        classifier=StaticClassifier(),
+        on_tool_call=exploding_callback,
+    )
+    client_out = io.StringIO()
+
+    assert passthrough.run_stdio(
+        io.StringIO(_json_line({
+            "jsonrpc": "2.0",
+            "id": "call-1",
+            "method": "tools/call",
+            "params": {"name": "read_file", "arguments": {"path": "/tmp/a.txt"}},
+        })),
+        client_out,
+    ) == 0
+
+    assert _responses(client_out.getvalue()) == [{
+        "jsonrpc": "2.0",
+        "id": "call-1",
+        "result": {"content": [{"type": "text", "text": "called"}]},
+    }]
+    assert passthrough.classifier_errors == 1
+
+
 def test_downstream_startup_failure_is_sanitized(tmp_path):
     home = tmp_path / "avp-home"
     init = init_proxy(home=home, agent_name="proxy")

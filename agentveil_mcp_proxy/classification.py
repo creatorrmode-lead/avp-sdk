@@ -214,9 +214,9 @@ def infer_risk_class(
             text_parts.append(environment)
     text = " ".join(text_parts).lower()
     tokens = tuple(item for item in re.split(r"[^a-z0-9]+", text) if item)
-    if any(word in tokens or word in text for word in _FINANCIAL_WORDS):
+    if _has_prefix(tokens, _FINANCIAL_WORDS):
         return RiskClass.FINANCIAL
-    if any(word in tokens or word in text for word in _PRODUCTION_WORDS):
+    if _has_prefix(tokens, _PRODUCTION_WORDS):
         return RiskClass.PRODUCTION
     if _has_prefix(tokens, _DESTRUCTIVE_PREFIXES):
         return RiskClass.DESTRUCTIVE
