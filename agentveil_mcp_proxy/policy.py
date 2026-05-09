@@ -236,11 +236,22 @@ class PrivacyConfig:
     resource: str = "hash"
     payload: str = "hash_only"
     evidence_upload: bool = False
+    show_details_in_approval_ui: bool = False
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any] | None = None) -> "PrivacyConfig":
         data = _require_mapping(data or {}, "privacy")
-        _reject_unknown(data, {"action", "resource", "payload", "evidence_upload"}, "privacy")
+        _reject_unknown(
+            data,
+            {
+                "action",
+                "resource",
+                "payload",
+                "evidence_upload",
+                "show_details_in_approval_ui",
+            },
+            "privacy",
+        )
         action = data.get("action", "redacted")
         resource = data.get("resource", "hash")
         payload = data.get("payload", "hash_only")
@@ -255,6 +266,10 @@ class PrivacyConfig:
             resource=resource,
             payload=payload,
             evidence_upload=_bool(data.get("evidence_upload", False), "privacy.evidence_upload"),
+            show_details_in_approval_ui=_bool(
+                data.get("show_details_in_approval_ui", False),
+                "privacy.show_details_in_approval_ui",
+            ),
         )
 
 
@@ -358,13 +373,23 @@ class PolicyRule:
     source: str = "user"
     intentional_override: bool = False
     reason: str | None = None
+    approval_scope_expansion: str | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "PolicyRule":
         data = _require_mapping(data, "policy.rules[]")
         _reject_unknown(
             data,
-            {"id", "decision", "match", "risk_class", "source", "intentional_override", "reason"},
+            {
+                "id",
+                "decision",
+                "match",
+                "risk_class",
+                "source",
+                "intentional_override",
+                "reason",
+                "approval",
+            },
             "policy.rules[]",
         )
         source = data.get("source", "user")
@@ -373,6 +398,19 @@ class PolicyRule:
         reason = data.get("reason")
         if reason is not None:
             reason = _non_empty_str(reason, "policy.rules[].reason")
+        approval_scope_expansion = None
+        approval = data.get("approval")
+        if approval is not None:
+            approval = _require_mapping(approval, "policy.rules[].approval")
+            _reject_unknown(approval, {"scope_expansion"}, "policy.rules[].approval")
+            scope = approval.get("scope_expansion")
+            if scope is not None:
+                scope = _non_empty_str(scope, "policy.rules[].approval.scope_expansion")
+                if scope != "similar_5m":
+                    raise ProxyConfigError(
+                        "policy.rules[].approval.scope_expansion must be similar_5m"
+                    )
+                approval_scope_expansion = scope
         return cls(
             id=_non_empty_str(data.get("id"), "policy.rules[].id"),
             decision=_decision(data.get("decision"), "policy.rules[].decision"),
@@ -387,6 +425,7 @@ class PolicyRule:
                 "policy.rules[].intentional_override",
             ),
             reason=reason,
+            approval_scope_expansion=approval_scope_expansion,
         )
 
     def matches(self, context: "ToolCallContext") -> bool:

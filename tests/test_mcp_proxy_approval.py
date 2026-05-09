@@ -1,0 +1,930 @@
+"""P6 tests for MCP proxy approval UX."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+import io
+import json
+from pathlib import Path
+import re
+import signal
+import sys
+import threading
+import time
+from typing import Any
+
+import httpx
+import pytest
+
+import agentveil_mcp_proxy.cli as proxy_cli
+from agentveil_mcp_proxy.approval import (
+    ApprovalFlowError,
+    ApprovalManager,
+    ApprovalNotifier,
+    ApprovalPrompt,
+    ApprovalServer,
+    HeadlessPolicy,
+    HeadlessPolicyError,
+)
+from agentveil_mcp_proxy.approval.notification import NotificationResult
+from agentveil_mcp_proxy.classification import ToolCallClassifier
+from agentveil_mcp_proxy.evidence import (
+    ApprovalEvidenceCapacityError,
+    ApprovalEvidenceStore,
+    ApprovalStatus,
+)
+from agentveil_mcp_proxy.passthrough import DownstreamConfig, McpPassthrough
+from agentveil_mcp_proxy.policy import ProxyConfig
+
+
+SECRET = "SECRET_APPROVAL_PAYLOAD"
+TOKEN_RE = re.compile(r'name="csrf_token" value="([^"]+)"')
+
+
+class NoopNotifier:
+    def __init__(self):
+        self.prompts: list[ApprovalPrompt] = []
+
+    def notify(self, prompt: ApprovalPrompt) -> NotificationResult:
+        self.prompts.append(prompt)
+        return NotificationResult("test", attempted=True, delivered=True)
+
+
+def _config(
+    *,
+    privacy: dict[str, Any] | None = None,
+    policy_rule: dict[str, Any] | None = None,
+    approval_timeout_seconds: int = 300,
+) -> ProxyConfig:
+    return ProxyConfig.from_dict({
+        "proxy_config_schema_version": 1,
+        "avp": {
+            "base_url": "https://agentveil.dev",
+            "agent_name": "agentveil-mcp-proxy",
+            "trusted_signer_dids": ["did:key:z6MktrustedSigner"],
+        },
+        "mode": "protect",
+        "privacy": privacy or {
+            "action": "redacted",
+            "resource": "hash",
+            "payload": "hash_only",
+            "evidence_upload": False,
+        },
+        "fallback": {
+            "read": "allow",
+            "write": "approval",
+            "destructive": "block",
+            "production": "block",
+            "financial": "block",
+            "unknown": "approval",
+        },
+        "approval": {
+            "approval_timeout_seconds": approval_timeout_seconds,
+            "on_timeout": "deny",
+        },
+        "policy": {
+            "id": "approval-test",
+            "policy_schema_version": 1,
+            "default_decision": "approval",
+            "default_risk_class": "write",
+            "rules": [policy_rule] if policy_rule is not None else [],
+        },
+        "downstream": {},
+    })
+
+
+def _write_rule(*, scope_expansion: bool = False, risk_class: str = "write") -> dict[str, Any]:
+    rule: dict[str, Any] = {
+        "id": "write-approval",
+        "source": "user",
+        "decision": "approval",
+        "risk_class": risk_class,
+        "match": {"server": "github", "tool": "create_issue"},
+    }
+    if scope_expansion:
+        rule["approval"] = {"scope_expansion": "similar_5m"}
+    return rule
+
+
+def _classification(config: ProxyConfig | None = None, *, tool: str = "create_issue"):
+    config = config or _config(policy_rule=_write_rule())
+    return ToolCallClassifier(config, server_name="github").classify(
+        tool=tool,
+        arguments={
+            "owner": "acme",
+            "repo": "private-repo",
+            "title": SECRET,
+            "token": "ghp_private",
+            "source_code": "print('private')",
+        },
+    )
+
+
+def _prompt(request_id: str = "req-1") -> ApprovalPrompt:
+    return ApprovalPrompt(
+        request_id=request_id,
+        client_id="cursor:session-1",
+        session_id="session-abcdef",
+        downstream_server="github",
+        tool_name="create_issue",
+        action_display="redacted",
+        action_details=None,
+        resource_display="sha256:" + "a" * 64,
+        resource_details=None,
+        risk_class="write",
+        payload_hash="sha256:" + "b" * 64,
+        policy_rule_id="write-approval",
+        created_at=1_700_000_000,
+        expires_at=1_700_000_300,
+        csrf_token="csrf-token",
+    )
+
+
+def _manager(
+    tmp_path: Path,
+    *,
+    config: ProxyConfig | None = None,
+    server: ApprovalServer | None = None,
+    headless: bool = False,
+    auto_deny: bool = False,
+    headless_policy: HeadlessPolicy | None = None,
+    cli_out: io.StringIO | None = None,
+) -> tuple[ApprovalManager, ApprovalEvidenceStore, ApprovalServer, io.StringIO]:
+    store = ApprovalEvidenceStore(tmp_path / "evidence.sqlite")
+    server = server or ApprovalServer()
+    if not server.is_running:
+        server.start()
+    cli = cli_out or io.StringIO()
+    manager = ApprovalManager(
+        evidence_store=store,
+        approval_server=server,
+        config=config or _config(policy_rule=_write_rule()),
+        client_id="cursor:pid:123",
+        session_id="session-1234567890",
+        headless=headless,
+        auto_deny=auto_deny,
+        headless_policy=headless_policy,
+        cli_out=cli,
+        browser_open=lambda _url: False,
+        notifier=NoopNotifier(),
+    )
+    return manager, store, server, cli
+
+
+def _get_csrf(client: httpx.Client, url: str) -> str:
+    response = client.get(url)
+    assert response.status_code == 200
+    match = TOKEN_RE.search(response.text)
+    assert match
+    return match.group(1)
+
+
+def _post_decision(client: httpx.Client, url: str, *, decision: str, csrf: str, scope: str = "exact"):
+    return client.post(url, data={
+        "decision": decision,
+        "csrf_token": csrf,
+        "approval_scope": scope,
+    })
+
+
+def test_approval_server_binds_only_to_127_0_0_1():
+    server = ApprovalServer()
+    server.start()
+    try:
+        assert server.host == "127.0.0.1"
+        assert server.base_url.startswith("http://127.0.0.1:")
+    finally:
+        server.stop()
+
+    with pytest.raises(Exception):
+        ApprovalServer(host="0.0.0.0")
+
+
+def test_post_without_token_returns_403():
+    server = ApprovalServer()
+    server.start()
+    try:
+        server.register(_prompt())
+        response = httpx.post(f"{server.base_url}/approval/wrong/pending/req-1", data={})
+        assert response.status_code == 403
+    finally:
+        server.stop()
+
+
+def test_post_with_wrong_csrf_returns_403():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        with httpx.Client() as client:
+            _get_csrf(client, url)
+            response = _post_decision(client, url, decision="approve", csrf="wrong")
+        assert response.status_code == 403
+    finally:
+        server.stop()
+
+
+def test_post_with_correct_token_and_cookie_and_csrf_records_decision():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            response = _post_decision(client, url, decision="approve", csrf=csrf)
+        assert response.status_code == 200
+        decision = server.wait_for_decision("req-1", timeout=0.1)
+        assert decision is not None
+        assert decision.decision == "approve"
+        assert decision.approval_scope == "exact"
+    finally:
+        server.stop()
+
+
+def test_response_headers_include_referrer_policy_no_referrer():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        response = httpx.get(url)
+        assert response.headers["Referrer-Policy"] == "no-referrer"
+    finally:
+        server.stop()
+
+
+def test_response_headers_include_cache_control_no_store():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        response = httpx.get(url)
+        assert "no-store" in response.headers["Cache-Control"]
+        assert "max-age=0" in response.headers["Cache-Control"]
+    finally:
+        server.stop()
+
+
+def test_response_headers_include_x_frame_options_deny_and_csp_frame_ancestors_none():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        response = httpx.get(url)
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert "Strict-Transport-Security" not in response.headers
+    finally:
+        server.stop()
+
+
+def test_token_rotates_on_proxy_restart():
+    server_one = ApprovalServer()
+    server_one.start()
+    old_token = server_one.session_token
+    server_one.stop()
+
+    server_two = ApprovalServer()
+    server_two.start()
+    try:
+        assert server_two.session_token != old_token
+        response = httpx.get(f"{server_two.base_url}/approval/{old_token}")
+        assert response.status_code == 403
+    finally:
+        server_two.stop()
+
+
+def test_pending_approval_persisted_before_ui_render(tmp_path):
+    class FailingStore:
+        def write_pending(self, _record):
+            raise ApprovalEvidenceCapacityError("full")
+
+    class FailingServer(ApprovalServer):
+        def register(self, _prompt):
+            raise AssertionError("UI rendered before durable write")
+
+    server = FailingServer()
+    manager = ApprovalManager(
+        evidence_store=FailingStore(),
+        approval_server=server,
+        config=_config(policy_rule=_write_rule()),
+        client_id="cursor",
+        session_id="session",
+        cli_out=io.StringIO(),
+        browser_open=lambda _url: False,
+        notifier=NoopNotifier(),
+    )
+
+    with pytest.raises(ApprovalFlowError):
+        manager.request_approval(_classification(), reason="local_approval_required")
+
+
+def test_headless_auto_deny_records_denial_evidence_and_does_not_render_ui(tmp_path):
+    class FailingServer(ApprovalServer):
+        def register(self, _prompt):
+            raise AssertionError("headless auto-deny must not render UI")
+
+    manager, store, server, _cli = _manager(
+        tmp_path,
+        server=FailingServer(),
+        headless=True,
+        auto_deny=True,
+    )
+    try:
+        outcome = manager.request_approval(_classification(), reason="local_approval_required")
+        record = store.get_pending(outcome.request_id)
+        assert outcome.status == ApprovalStatus.DENIED.value
+        assert record.status == ApprovalStatus.DENIED.value
+        assert record.error_class == "headless_auto_deny"
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_headless_policy_pre_approval_matches_exact_payload_for_destructive(tmp_path):
+    config = _config(policy_rule=_write_rule(risk_class="destructive"))
+    classification = _classification(config)
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    policy = HeadlessPolicy.from_dict({
+        "headless_policy_schema_version": 1,
+        "pre_approvals": [{
+            "server": "github",
+            "tool": "create_issue",
+            "risk_class": "destructive",
+            "environment": "mcp_proxy",
+            "max_payload_hash": classification.payload_hash,
+            "expires_at": expires,
+        }],
+    })
+    manager, store, server, _cli = _manager(
+        tmp_path,
+        config=config,
+        headless=True,
+        headless_policy=policy,
+    )
+    try:
+        outcome = manager.request_approval(classification, reason="local_approval_required")
+        record = store.get_pending(outcome.request_id)
+        assert outcome.approved
+        assert record.status == ApprovalStatus.APPROVED.value
+        assert record.approval_scope == "exact"
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_headless_policy_missing_match_denies_by_default(tmp_path):
+    policy = HeadlessPolicy.from_dict({
+        "headless_policy_schema_version": 1,
+        "pre_approvals": [],
+    })
+    manager, store, server, _cli = _manager(tmp_path, headless=True, headless_policy=policy)
+    try:
+        outcome = manager.request_approval(_classification(), reason="local_approval_required")
+        record = store.get_pending(outcome.request_id)
+        assert outcome.status == ApprovalStatus.DENIED.value
+        assert record.error_class == "headless_policy_no_match"
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_headless_policy_yaml_or_json_schema_validation_rejects_unknown_fields():
+    with pytest.raises(HeadlessPolicyError, match="unknown field"):
+        HeadlessPolicy.from_dict({
+            "headless_policy_schema_version": 1,
+            "pre_approvals": [],
+            "allow_everything": True,
+        })
+
+
+def test_headless_policy_destructive_requires_payload_hash_unless_explicitly_narrow():
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with pytest.raises(HeadlessPolicyError, match="max_payload_hash"):
+        HeadlessPolicy.from_dict({
+            "headless_policy_schema_version": 1,
+            "pre_approvals": [{
+                "server": "github",
+                "tool": "delete_repo",
+                "risk_class": "destructive",
+                "expires_at": expires,
+            }],
+        })
+    policy = HeadlessPolicy.from_dict({
+        "headless_policy_schema_version": 1,
+        "pre_approvals": [{
+            "server": "github",
+            "tool": "delete_repo",
+            "risk_class": "destructive",
+            "allow_narrow_match": True,
+            "expires_at": expires,
+        }],
+    })
+    assert policy.pre_approvals[0].allow_narrow_match is True
+    config = _config(policy_rule={
+        "id": "delete-approval",
+        "source": "user",
+        "decision": "approval",
+        "risk_class": "destructive",
+        "match": {"server": "github", "tool": "delete_repo"},
+    })
+    classification = ToolCallClassifier(config, server_name="github").classify(
+        tool="delete_repo",
+        arguments={"owner": "acme", "repo": "private-repo"},
+    )
+    assert policy.match(classification) is not None
+
+
+def test_token_hash_in_evidence_not_raw_token(tmp_path):
+    manager, store, server, _cli = _manager(tmp_path, headless=True, auto_deny=True)
+    try:
+        outcome = manager.request_approval(_classification(), reason="local_approval_required")
+        rendered = json.dumps(store.get_pending(outcome.request_id).__dict__, sort_keys=True)
+        assert server.token_hash in rendered
+        assert server.session_token not in rendered
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_token_url_not_printed_when_stdout_not_tty(tmp_path):
+    manager, store, server, cli = _manager(tmp_path, config=_config(
+        policy_rule=_write_rule(),
+        approval_timeout_seconds=1,
+    ))
+    worker = threading.Thread(
+        target=lambda: manager.request_approval(_classification(), reason="local_approval_required"),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.session_token not in cli.getvalue()
+        assert "approval server bound" in cli.getvalue()
+    finally:
+        prompt = server.pending_prompts()[0]
+        url = server.approval_url(prompt.request_id)
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            _post_decision(client, url, decision="deny", csrf=csrf)
+        worker.join(timeout=2)
+        server.stop()
+        store.close()
+
+
+def test_notification_chain_falls_through_to_cli_when_browser_unavailable(tmp_path):
+    manager, store, server, cli = _manager(tmp_path)
+    worker = threading.Thread(
+        target=lambda: manager.request_approval(_classification(), reason="local_approval_required"),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert "approval pending:" in cli.getvalue()
+    finally:
+        prompt = server.pending_prompts()[0]
+        url = server.approval_url(prompt.request_id)
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            _post_decision(client, url, decision="deny", csrf=csrf)
+        worker.join(timeout=2)
+        server.stop()
+        store.close()
+
+
+def test_os_notification_does_not_include_token_or_payload(monkeypatch):
+    captured = {}
+
+    def runner(args, **_kwargs):
+        captured["args"] = args
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/osascript")
+    notifier = ApprovalNotifier(runner=runner)
+    prompt = _prompt()
+    notifier.notify(prompt)
+
+    rendered = json.dumps(captured["args"])
+    assert SECRET not in rendered
+    assert "csrf-token" not in rendered
+    assert "github.create_issue" in rendered
+
+
+def test_notification_includes_client_id_and_session_id(monkeypatch):
+    captured = {}
+
+    def runner(args, **_kwargs):
+        captured["args"] = args
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/osascript")
+    notifier = ApprovalNotifier(runner=runner)
+    notifier.notify(_prompt())
+
+    rendered = json.dumps(captured["args"])
+    assert "cursor:session-1" in rendered
+    assert "session-" in rendered
+
+
+def test_approval_ui_redacts_action_resource_per_privacy_config(tmp_path):
+    manager, store, server, _cli = _manager(tmp_path)
+    worker = threading.Thread(
+        target=lambda: manager.request_approval(_classification(), reason="local_approval_required"),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        prompt = server.pending_prompts()[0]
+        text = httpx.get(server.approval_url(prompt.request_id)).text
+        assert SECRET not in text
+        assert "private-repo" not in text
+        assert "redacted" in text
+    finally:
+        url = server.approval_url(server.pending_prompts()[0].request_id)
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            _post_decision(client, url, decision="deny", csrf=csrf)
+        worker.join(timeout=2)
+        server.stop()
+        store.close()
+
+
+def test_show_details_button_only_renders_when_config_allows():
+    server = ApprovalServer()
+    server.start()
+    try:
+        no_details = server.register(_prompt("no-details"))
+        assert "Show local details" not in httpx.get(no_details).text
+
+        details_prompt = replace(
+            _prompt("details"),
+            action_details="github.create_issue",
+            resource_details="github:acme/private-repo",
+        )
+        details_url = server.register(details_prompt)
+        assert "Show local details" in httpx.get(details_url).text
+    finally:
+        server.stop()
+
+
+def test_ui_never_shows_more_detail_than_backend_metadata_privacy_mode(tmp_path):
+    config = _config(
+        privacy={
+            "action": "hash",
+            "resource": "hash",
+            "payload": "hash_only",
+            "evidence_upload": False,
+            "show_details_in_approval_ui": True,
+        },
+        policy_rule=_write_rule(),
+    )
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    worker = threading.Thread(
+        target=lambda: manager.request_approval(_classification(config), reason="local_approval_required"),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        prompt = server.pending_prompts()[0]
+        text = httpx.get(server.approval_url(prompt.request_id)).text
+        assert "github.create_issue" not in text
+        assert "private-repo" not in text
+        assert "sha256:" in text
+    finally:
+        url = server.approval_url(server.pending_prompts()[0].request_id)
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            _post_decision(client, url, decision="deny", csrf=csrf)
+        worker.join(timeout=2)
+        server.stop()
+        store.close()
+
+
+def test_destructive_approval_defaults_to_exact_request_scope(tmp_path):
+    config = _config(policy_rule=_write_rule(risk_class="destructive"))
+    classification = _classification(config)
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    try:
+        prompt = manager._prompt_for(
+            classification,
+            request_id="req",
+            created_at=1,
+            expires_at=2,
+            scope_expansion_allowed=manager._scope_expansion_allowed(classification),
+        )
+        assert prompt.scope_expansion_allowed is False
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_write_approval_optional_5min_similar_only_when_policy_allows(tmp_path):
+    config = _config(policy_rule=_write_rule(scope_expansion=True))
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    try:
+        classification = _classification(config)
+        prompt = manager._prompt_for(
+            classification,
+            request_id="req",
+            created_at=1,
+            expires_at=2,
+            scope_expansion_allowed=manager._scope_expansion_allowed(classification),
+        )
+        assert prompt.scope_expansion_allowed is True
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_scope_expansion_choice_recorded_in_evidence_fields(tmp_path):
+    config = _config(policy_rule=_write_rule(scope_expansion=True))
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    result_box = {}
+    worker = threading.Thread(
+        target=lambda: result_box.setdefault(
+            "outcome",
+            manager.request_approval(_classification(config), reason="local_approval_required"),
+        ),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        prompt = server.pending_prompts()[0]
+        url = server.approval_url(prompt.request_id)
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            response = _post_decision(client, url, decision="approve", csrf=csrf, scope="similar_5m")
+        assert response.status_code == 200
+        worker.join(timeout=2)
+        record = store.get_pending(result_box["outcome"].request_id)
+        assert record.approval_scope == "similar_5m"
+        assert record.granted_scope_expires_at is not None
+        assert record.matched_policy_rule == "write-approval"
+        assert record.user_decision_timestamp is not None
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_pending_list_shows_correlation_fields_for_multiple_clients():
+    server = ApprovalServer()
+    server.start()
+    try:
+        first = _prompt("req-a")
+        second = replace(_prompt("req-b"), client_id="claude:session-2", session_id="session-b")
+        server.register(first)
+        list_url = server.register(second).rsplit("/pending/", 1)[0]
+        text = httpx.get(list_url).text
+        assert "github.create_issue" in text
+        assert "write" in text
+        assert "cursor:session-1" in text
+        assert "claude:session-2" in text
+    finally:
+        server.stop()
+
+
+def test_browser_tab_title_includes_client_id_and_session_short_id():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        text = httpx.get(url).text
+        assert "<title>Approval pending: cursor:session-1 session session-" in text
+    finally:
+        server.stop()
+
+
+def test_headless_disables_browser_launch_and_os_notification(tmp_path):
+    class FailingNotifier:
+        def notify(self, _prompt):
+            raise AssertionError("headless must not notify")
+
+    manager, store, server, _cli = _manager(tmp_path, headless=True, auto_deny=True)
+    manager.notifier = FailingNotifier()
+    manager.browser_open = lambda _url: (_ for _ in ()).throw(AssertionError("headless browser"))
+    try:
+        outcome = manager.request_approval(_classification(), reason="local_approval_required")
+        assert outcome.status == ApprovalStatus.DENIED.value
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_approval_flow_does_not_send_raw_args_to_evidence_store_or_ui_or_notification(tmp_path):
+    manager, store, server, _cli = _manager(tmp_path)
+    worker = threading.Thread(
+        target=lambda: manager.request_approval(_classification(), reason="local_approval_required"),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        prompt = server.pending_prompts()[0]
+        text = httpx.get(server.approval_url(prompt.request_id)).text
+        rendered_record = json.dumps(store.get_pending(prompt.request_id).__dict__, sort_keys=True)
+        assert SECRET not in text
+        assert SECRET not in rendered_record
+        assert "ghp_private" not in text
+        assert "ghp_private" not in rendered_record
+    finally:
+        url = server.approval_url(server.pending_prompts()[0].request_id)
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            _post_decision(client, url, decision="deny", csrf=csrf)
+        worker.join(timeout=2)
+        server.stop()
+        store.close()
+
+
+def _approval_downstream(tmp_path: Path, log_path: Path) -> Path:
+    script = tmp_path / "approval_downstream.py"
+    script.write_text(
+        """
+import json
+import os
+import sys
+
+log_path = os.environ["DOWNSTREAM_LOG"]
+for line in sys.stdin:
+    msg = json.loads(line)
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(msg.get("method", "") + "\\n")
+    if "id" not in msg:
+        continue
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "id": msg["id"],
+        "result": {"content": [{"type": "text", "text": "approved"}]},
+    }), flush=True)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return script
+
+
+def _tool_call() -> str:
+    return json.dumps({
+        "jsonrpc": "2.0",
+        "id": "call-1",
+        "method": "tools/call",
+        "params": {
+            "name": "create_issue",
+            "arguments": {"owner": "acme", "repo": "private-repo", "title": SECRET},
+        },
+    }, separators=(",", ":")) + "\n"
+
+
+def test_approve_resumes_downstream_call_and_records_evidence(tmp_path):
+    config = _config(policy_rule=_write_rule())
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    log_path = tmp_path / "downstream.log"
+    passthrough = McpPassthrough(
+        DownstreamConfig(
+            command=sys.executable,
+            args=("-u", str(_approval_downstream(tmp_path, log_path))),
+            name="github",
+            env={"DOWNSTREAM_LOG": str(log_path)},
+        ),
+        classifier=ToolCallClassifier(config, server_name="github"),
+        approval_manager=manager,
+    )
+    client_out = io.StringIO()
+    worker = threading.Thread(
+        target=lambda: passthrough.run_stdio(io.StringIO(_tool_call()), client_out),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        prompt = server.pending_prompts()[0]
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, server.approval_url(prompt.request_id))
+            _post_decision(client, server.approval_url(prompt.request_id), decision="approve", csrf=csrf)
+        worker.join(timeout=3)
+        responses = [json.loads(line) for line in client_out.getvalue().splitlines()]
+        assert responses[0]["result"]["content"][0]["text"] == "approved"
+        record = store.get_pending(prompt.request_id)
+        assert record.status == ApprovalStatus.EXECUTED.value
+        assert log_path.read_text(encoding="utf-8").splitlines() == ["tools/call"]
+    finally:
+        passthrough.stop()
+        server.stop()
+        store.close()
+
+
+def test_deny_blocks_downstream_call_and_records_evidence(tmp_path):
+    config = _config(policy_rule=_write_rule())
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    log_path = tmp_path / "downstream.log"
+    passthrough = McpPassthrough(
+        DownstreamConfig(
+            command=sys.executable,
+            args=("-u", str(_approval_downstream(tmp_path, log_path))),
+            name="github",
+            env={"DOWNSTREAM_LOG": str(log_path)},
+        ),
+        classifier=ToolCallClassifier(config, server_name="github"),
+        approval_manager=manager,
+    )
+    client_out = io.StringIO()
+    worker = threading.Thread(
+        target=lambda: passthrough.run_stdio(io.StringIO(_tool_call()), client_out),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        prompt = server.pending_prompts()[0]
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, server.approval_url(prompt.request_id))
+            _post_decision(client, server.approval_url(prompt.request_id), decision="deny", csrf=csrf)
+        worker.join(timeout=3)
+        responses = [json.loads(line) for line in client_out.getvalue().splitlines()]
+        assert responses[0]["error"]["data"]["reason"] == "user_denied"
+        record = store.get_pending(prompt.request_id)
+        assert record.status == ApprovalStatus.DENIED.value
+        assert not log_path.exists()
+    finally:
+        passthrough.stop()
+        server.stop()
+        store.close()
+
+
+def test_timeout_marks_pending_as_expired_and_returns_sanitized_error(tmp_path):
+    config = _config(policy_rule=_write_rule(), approval_timeout_seconds=1)
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    outcome = manager.request_approval(_classification(config), reason="local_approval_required")
+    record = store.get_pending(outcome.request_id)
+    try:
+        assert outcome.status == ApprovalStatus.EXPIRED.value
+        assert record.status == ApprovalStatus.EXPIRED.value
+        assert record.error_class == "approval_timeout"
+        assert SECRET not in outcome.reason
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_signal_handlers_extend_to_approval_server_graceful_shutdown(tmp_path, monkeypatch):
+    home = tmp_path / "avp-home"
+    result = proxy_cli.init_proxy(home=home, agent_name="proxy", plaintext=True)
+    config = json.loads(result.config_path.read_text(encoding="utf-8"))
+    config["downstream"] = {
+        "name": "fake",
+        "command": sys.executable,
+        "args": ["-c", "print('ready')"],
+    }
+    result.config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    stopped = {"server": False, "store": False}
+
+    class RecordingServer(ApprovalServer):
+        def stop(self, *args, **kwargs):
+            stopped["server"] = True
+            return super().stop(*args, **kwargs)
+
+    class RecordingStore(ApprovalEvidenceStore):
+        def close(self):
+            stopped["store"] = True
+            return super().close()
+
+    def fake_run_stdio(self, _client_in, _out):
+        raise proxy_cli._RunProxySignalExit(signal.SIGTERM)
+
+    monkeypatch.setattr(proxy_cli, "ApprovalServer", RecordingServer)
+    monkeypatch.setattr(proxy_cli, "ApprovalEvidenceStore", RecordingStore)
+    monkeypatch.setattr(McpPassthrough, "run_stdio", fake_run_stdio)
+
+    assert proxy_cli.run_proxy(home=home, client_in=io.StringIO(), out=io.StringIO()) == 0
+    assert stopped == {"server": True, "store": True}

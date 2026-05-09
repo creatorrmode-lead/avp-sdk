@@ -3,9 +3,18 @@
 This package includes the local config/policy foundation, encrypted proxy
 identity management, MCP stdio passthrough, local classification with privacy
 hashing, Runtime Gate enforcement, and durable local approval evidence storage.
-Approval UI and circuit breaking remain future slices.
+Circuit breaking remains a future slice.
 """
 
+from agentveil_mcp_proxy.approval import (
+    ApprovalFlowError,
+    ApprovalManager,
+    ApprovalNotifier,
+    ApprovalOutcome,
+    ApprovalServer,
+    HeadlessPolicy,
+    HeadlessPolicyError,
+)
 from agentveil_mcp_proxy.classification import (
     ClassifiedToolCall,
     ToolCallClassifier,
@@ -73,12 +82,19 @@ __all__ = [
     "ApprovalEvidenceSchemaError",
     "ApprovalEvidenceStore",
     "ApprovalEvidenceTransitionError",
+    "ApprovalFlowError",
+    "ApprovalManager",
+    "ApprovalNotifier",
+    "ApprovalOutcome",
+    "ApprovalServer",
     "ApprovalStatus",
     "AvpConfig",
     "ClassifiedToolCall",
     "DecisionMode",
     "DownstreamConfig",
     "FallbackConfig",
+    "HeadlessPolicy",
+    "HeadlessPolicyError",
     "McpPassthrough",
     "PassthroughError",
     "PendingApproval",

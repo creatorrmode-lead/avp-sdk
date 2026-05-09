@@ -114,6 +114,10 @@ class PendingApproval:
     result_status: str | None = None
     result_hash: str | None = None
     error_class: str | None = None
+    approval_scope: str | None = None
+    granted_scope_expires_at: int | None = None
+    matched_policy_rule: str | None = None
+    user_decision_timestamp: int | None = None
 
 
 @dataclass(frozen=True)
@@ -139,6 +143,10 @@ _OPTIONAL_COLUMNS = {
     "result_status",
     "result_hash",
     "error_class",
+    "approval_scope",
+    "granted_scope_expires_at",
+    "matched_policy_rule",
+    "user_decision_timestamp",
 }
 _TRANSITION_FIELDS = {
     "decision_audit_id",
@@ -149,6 +157,10 @@ _TRANSITION_FIELDS = {
     "result_status",
     "result_hash",
     "error_class",
+    "approval_scope",
+    "granted_scope_expires_at",
+    "matched_policy_rule",
+    "user_decision_timestamp",
 }
 _HASH_COLUMNS = {
     "resource_hash",
@@ -169,7 +181,7 @@ class ApprovalEvidenceStore:
         self.max_records = max_records
         self._lock = threading.RLock()
         self._ensure_db_file()
-        self._conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+        self._conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._configure_connection()
         self._apply_schema()
@@ -220,27 +232,29 @@ class ApprovalEvidenceStore:
     def get_pending(self, request_id: str) -> PendingApproval | None:
         """Return the approval record for a request ID, if present."""
 
-        row = self._conn.execute(
-            f"SELECT {', '.join(_COLUMNS)} FROM pending_approvals WHERE request_id = ?",
-            (request_id,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {', '.join(_COLUMNS)} FROM pending_approvals WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
         return None if row is None else _row_to_record(row)
 
     def list_pending(self, *, since_timestamp: int | None = None) -> list[PendingApproval]:
         """List non-expired pending approvals, optionally filtered by creation time."""
 
-        if since_timestamp is None:
-            rows = self._conn.execute(
-                f"SELECT {', '.join(_COLUMNS)} FROM pending_approvals WHERE status = ? "
-                "ORDER BY created_at, request_id",
-                (ApprovalStatus.PENDING.value,),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                f"SELECT {', '.join(_COLUMNS)} FROM pending_approvals WHERE status = ? "
-                "AND created_at >= ? ORDER BY created_at, request_id",
-                (ApprovalStatus.PENDING.value, since_timestamp),
-            ).fetchall()
+        with self._lock:
+            if since_timestamp is None:
+                rows = self._conn.execute(
+                    f"SELECT {', '.join(_COLUMNS)} FROM pending_approvals WHERE status = ? "
+                    "ORDER BY created_at, request_id",
+                    (ApprovalStatus.PENDING.value,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"SELECT {', '.join(_COLUMNS)} FROM pending_approvals WHERE status = ? "
+                    "AND created_at >= ? ORDER BY created_at, request_id",
+                    (ApprovalStatus.PENDING.value, since_timestamp),
+                ).fetchall()
         return [_row_to_record(row) for row in rows]
 
     def transition(self, request_id: str, new_status: str, **fields: Any) -> PendingApproval:
@@ -382,10 +396,25 @@ class ApprovalEvidenceStore:
                             f"evidence schema version {version} is unsupported"
                         )
                 self._conn.execute(_CREATE_PENDING_APPROVALS_SQL)
+                self._ensure_optional_columns()
                 self._conn.commit()
             except Exception:
                 self._conn.rollback()
                 raise
+
+    def _ensure_optional_columns(self) -> None:
+        existing = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(pending_approvals)").fetchall()
+        }
+        for column, column_type in {
+            "approval_scope": "TEXT NULL",
+            "granted_scope_expires_at": "INTEGER NULL",
+            "matched_policy_rule": "TEXT NULL",
+            "user_decision_timestamp": "INTEGER NULL",
+        }.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {column_type}")
 
     def _begin(self) -> None:
         self._conn.execute("BEGIN IMMEDIATE")
@@ -491,7 +520,11 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     approval_decided_by TEXT NULL,
     result_status TEXT NULL,
     result_hash TEXT NULL,
-    error_class TEXT NULL
+    error_class TEXT NULL,
+    approval_scope TEXT NULL,
+    granted_scope_expires_at INTEGER NULL,
+    matched_policy_rule TEXT NULL,
+    user_decision_timestamp INTEGER NULL
 )
 """
 

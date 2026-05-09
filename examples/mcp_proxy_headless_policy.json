@@ -1,0 +1,14 @@
+{
+  "headless_policy_schema_version": 1,
+  "pre_approvals": [
+    {
+      "server": "github",
+      "tool": "create_issue",
+      "resource_hash": "sha256:replace-with-resource-hash",
+      "environment": "mcp_proxy",
+      "risk_class": "write",
+      "max_payload_hash": "sha256:replace-with-payload-hash",
+      "expires_at": "2026-06-01T00:00:00Z"
+    }
+  ]
+}

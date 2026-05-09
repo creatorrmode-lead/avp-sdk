@@ -1,8 +1,9 @@
 """MCP stdio pass-through for the MCP proxy.
 
-P5 applies local policy to MCP ``tools/call`` requests and, for
-``ask_backend``, calls AVP Runtime Gate before forwarding. Approval UI, WAL
-evidence, and circuit breaking remain future slices.
+P6 applies local policy to MCP ``tools/call`` requests and, for
+``ask_backend``, calls AVP Runtime Gate before forwarding. Approval-required
+decisions can be routed through the local approval manager before downstream
+execution. Circuit breaking remains a future slice.
 
 Lifecycle behavior by platform:
   - Linux: downstream starts in its own process group and receives SIGTERM via
@@ -33,6 +34,7 @@ import threading
 import time
 from typing import Any, Callable, Deque, Mapping, TextIO
 
+from agentveil_mcp_proxy.approval import ApprovalFlowError, ApprovalOutcome
 from agentveil_mcp_proxy.classification import ClassifiedToolCall, ToolCallClassifier
 from agentveil_mcp_proxy.policy import PolicyDecision, ProxyConfig
 from agentveil_mcp_proxy.runtime_gate import (
@@ -327,12 +329,14 @@ class McpPassthrough:
         classifier: ToolCallClassifier | None = None,
         on_tool_call: Callable[[ClassifiedToolCall], None] | None = None,
         runtime_gate_factory: Callable[[], Any] | None = None,
+        approval_manager: Any | None = None,
     ):
         self.downstream = downstream
         self.cwd = cwd
         self.classifier = classifier
         self.on_tool_call = on_tool_call
         self.runtime_gate_factory = runtime_gate_factory
+        self.approval_manager = approval_manager
         self.config = getattr(classifier, "config", None)
         self.process: subprocess.Popen[str] | None = None
         self._stdout_thread: threading.Thread | None = None
@@ -351,6 +355,7 @@ class McpPassthrough:
         self._security_events: Deque[Mapping[str, Any]] = deque(maxlen=1000)
         self._timed_out_response_ids: set[str] = set()
         self._windows_job: _WindowsJobObject | None = None
+        self._current_approval_outcome: ApprovalOutcome | None = None
 
     @property
     def stderr_bytes_drained(self) -> int:
@@ -514,15 +519,20 @@ class McpPassthrough:
 
         try:
             classification = self._classify_for_local_metadata(message)
+            self._current_approval_outcome = None
             policy_error = self._policy_error_response(classification, request_id)
             if policy_error is not None:
                 return [policy_error] if has_id else []
+            approval_outcome = self._current_approval_outcome
             self._send_downstream(message)
             if not has_id:
                 return []
-            return [self._wait_downstream_response(request_id)]
+            response = self._wait_downstream_response(request_id)
+            self._record_approval_result(approval_outcome, response)
+            return [response]
         except DownstreamTimeoutError:
             self._downstream_timeouts += 1
+            self._record_approval_error(self._current_approval_outcome, "downstream_response_timeout")
             if not has_id:
                 return []
             return [jsonrpc_error(
@@ -532,6 +542,7 @@ class McpPassthrough:
                 data={"status": "timeout", "reason": "downstream_response_timeout"},
             )]
         except PassthroughError:
+            self._record_approval_error(self._current_approval_outcome, "downstream_unavailable")
             if not has_id:
                 return []
             return [jsonrpc_error(
@@ -577,7 +588,8 @@ class McpPassthrough:
                 reason="local_policy_block",
             )
         if decision is PolicyDecision.APPROVAL:
-            return _approval_required_error(
+            return self._approval_flow_response(
+                classification,
                 request_id,
                 reason="local_approval_required",
             )
@@ -621,10 +633,11 @@ class McpPassthrough:
         if decision.decision == DECISION_ALLOW:
             return None
         if decision.decision == DECISION_WAITING:
-            return _approval_required_error(
+            return self._approval_flow_response(
+                classification,
                 request_id,
                 reason="runtime_gate_waiting_for_human_approval",
-                decision=decision,
+                runtime_decision=decision,
             )
         if decision.decision == DECISION_BLOCK:
             return _blocked_error(
@@ -655,7 +668,8 @@ class McpPassthrough:
         if fallback is PolicyDecision.ALLOW:
             return None
         if fallback is PolicyDecision.APPROVAL:
-            return _approval_required_error(
+            return self._approval_flow_response(
+                classification,
                 request_id,
                 reason="runtime_gate_unavailable",
                 message="approval required because AVP Runtime Gate is unavailable",
@@ -666,6 +680,65 @@ class McpPassthrough:
             "AVP Runtime Gate unavailable",
             data={"status": "blocked", "reason": "runtime_gate_unavailable"},
         )
+
+    def _approval_flow_response(
+        self,
+        classification: ClassifiedToolCall,
+        request_id: Any,
+        *,
+        reason: str,
+        message: str = "approval required",
+        runtime_decision: RuntimeGateDecision | None = None,
+    ) -> dict[str, Any] | None:
+        if self.approval_manager is None:
+            return _approval_required_error(
+                request_id,
+                reason=reason,
+                message=message,
+                decision=runtime_decision,
+            )
+        try:
+            outcome = self.approval_manager.request_approval(
+                classification,
+                runtime_decision=runtime_decision,
+                reason=reason,
+            )
+        except ApprovalFlowError:
+            return jsonrpc_error(
+                request_id,
+                JSONRPC_APPROVAL_REQUIRED,
+                "approval unavailable",
+                data={"status": "blocked", "reason": "approval_evidence_unavailable"},
+            )
+        if outcome.approved:
+            self._current_approval_outcome = outcome
+            return None
+        if outcome.status == "expired":
+            return jsonrpc_error(
+                request_id,
+                JSONRPC_APPROVAL_REQUIRED,
+                "approval timed out",
+                data={"status": "timeout", "reason": outcome.reason},
+            )
+        return _blocked_error(
+            request_id,
+            "blocked by approval decision",
+            reason=outcome.reason,
+        )
+
+    def _record_approval_result(
+        self,
+        outcome: ApprovalOutcome | None,
+        response: dict[str, Any],
+    ) -> None:
+        if outcome is None or self.approval_manager is None:
+            return
+        self.approval_manager.record_execution_result(outcome, response)
+
+    def _record_approval_error(self, outcome: ApprovalOutcome | None, error_class: str) -> None:
+        if outcome is None or self.approval_manager is None:
+            return
+        self.approval_manager.record_execution_error(outcome, error_class)
 
     def _runtime_gate_client(self) -> Any:
         if self._runtime_gate is None:

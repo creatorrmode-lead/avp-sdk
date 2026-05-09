@@ -2,8 +2,9 @@
 
 The CLI creates encrypted local proxy identities by default, manages the
 control grant used by Runtime Gate, and runs stdio passthrough for configured
-downstream MCP servers. Approval UI, WAL evidence, and circuit breaking remain
-future slices.
+downstream MCP servers. Approval-required calls can route through the local
+approval surface and durable evidence store. Circuit breaking remains a future
+slice.
 """
 
 from __future__ import annotations
@@ -26,7 +27,14 @@ from nacl.signing import SigningKey
 
 from agentveil.agent import AVPAgent
 from agentveil.delegation import DelegationInvalid, verify_delegation
+from agentveil_mcp_proxy.approval import (
+    ApprovalManager,
+    ApprovalServer,
+    HeadlessPolicy,
+    HeadlessPolicyError,
+)
 from agentveil_mcp_proxy.classification import ToolCallClassifier
+from agentveil_mcp_proxy.evidence import ApprovalEvidenceStore
 from agentveil_mcp_proxy.identity import (
     IdentityDecryptError,
     IdentityError,
@@ -352,6 +360,8 @@ def _policy_to_dict(policy: PolicyConfig) -> dict[str, Any]:
             item["intentional_override"] = True
         if rule.reason:
             item["reason"] = rule.reason
+        if rule.approval_scope_expansion:
+            item["approval"] = {"scope_expansion": rule.approval_scope_expansion}
         rules.append(item)
     return {
         "id": policy.id,
@@ -760,6 +770,9 @@ def run_proxy(
     out: TextIO | None = None,
     client_in: TextIO | None = None,
     err: TextIO | None = None,
+    headless: bool = False,
+    auto_deny: bool = False,
+    headless_policy_path: Path | None = None,
 ) -> int:
     """Validate readiness and run stdio MCP pass-through."""
 
@@ -791,6 +804,25 @@ def run_proxy(
         downstream = DownstreamConfig.from_proxy_config(config)
         classifier = ToolCallClassifier(config, server_name=downstream.name)
         control_grant_path = paths.control_grant_path(config.avp.agent_name)
+        headless_policy = None
+        if headless_policy_path is not None:
+            try:
+                headless_policy = HeadlessPolicy.from_file(headless_policy_path)
+            except HeadlessPolicyError as exc:
+                raise ProxyCliError(str(exc), exit_code=1) from exc
+        evidence_store = ApprovalEvidenceStore(paths.proxy_dir / "evidence.sqlite")
+        approval_server = ApprovalServer()
+        approval_server.start()
+        approval_manager = ApprovalManager(
+            evidence_store=evidence_store,
+            approval_server=approval_server,
+            config=config,
+            client_id=f"{downstream.name}:pid:{os.getpid()}",
+            headless=headless,
+            auto_deny=auto_deny,
+            headless_policy=headless_policy,
+            cli_out=err,
+        )
         runtime_gate_factory = lambda: RuntimeGateClient.from_files(
             identity_path=identity_path,
             control_grant_path=control_grant_path,
@@ -802,6 +834,7 @@ def run_proxy(
             downstream,
             classifier=classifier,
             runtime_gate_factory=runtime_gate_factory,
+            approval_manager=approval_manager,
         )
         previous_handlers = _install_run_proxy_signal_handlers(client_in)
         try:
@@ -810,6 +843,8 @@ def run_proxy(
             return 0
         finally:
             _restore_signal_handlers(previous_handlers)
+            approval_server.stop()
+            evidence_store.close()
     except PassthroughError as exc:
         raise ProxyCliError(str(exc), exit_code=1) from exc
 
@@ -853,6 +888,9 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="Run stdio MCP passthrough")
     _add_common_path_args(run)
     _add_passphrase_args(run)
+    run.add_argument("--headless", action="store_true", help="Disable browser and OS notification attempts")
+    run.add_argument("--auto-deny", action="store_true", help="Deny every approval-required action")
+    run.add_argument("--headless-policy", type=Path, default=None, help="Headless approval policy JSON path")
 
     reissue = subparsers.add_parser("reissue-grant", help="Issue a fresh local control grant")
     _add_common_path_args(reissue)
@@ -903,6 +941,9 @@ def main(argv: list[str] | None = None) -> int:
                 config_path=args.config,
                 passphrase=args.passphrase,
                 passphrase_file=args.passphrase_file,
+                headless=args.headless,
+                auto_deny=args.auto_deny,
+                headless_policy_path=args.headless_policy,
             )
         if args.command == "reissue-grant":
             reissue_grant(

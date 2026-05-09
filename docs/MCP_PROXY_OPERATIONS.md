@@ -58,6 +58,56 @@ Pending approval records are written before an approval prompt can authorize
 downstream execution. On startup, stale pending records are marked expired; the
 store never auto-approves a request during recovery.
 
+## Local Approval Surface
+
+Approval-required tool calls are routed to a loopback approval server bound to
+`127.0.0.1` on an ephemeral port. The approval URL contains a per-process token,
+and approve/deny POSTs require that path token, an HTTP-only HMAC cookie, and a
+per-request CSRF token. The token rotates on every proxy restart and only its
+hash is written to local evidence.
+
+Approval pages set `Referrer-Policy: no-referrer`, no-store cache headers,
+frame-denial headers, and a restrictive Content Security Policy on every
+response. The UI displays privacy-filtered action/resource metadata and never
+shows raw MCP arguments, prompts, outputs, tokens, source code, secrets, or
+private logs.
+
+The proxy writes the pending approval record before it renders the approval page
+or sends notifications. Approval, denial, and timeout decisions are written back
+to local evidence before the proxy acts on them.
+
+## Headless Approval Mode
+
+For CI or scheduled jobs, run with deny-by-default headless behavior:
+
+```bash
+agentveil-mcp-proxy run --headless --auto-deny
+agentveil-mcp-proxy run --headless --headless-policy /etc/avp/mcp-headless-policy.json
+```
+
+Headless policy files use JSON and are schema-versioned:
+
+```json
+{
+  "headless_policy_schema_version": 1,
+  "pre_approvals": [
+    {
+      "server": "github",
+      "tool": "create_issue",
+      "resource_hash": "sha256:...",
+      "environment": "mcp_proxy",
+      "risk_class": "write",
+      "max_payload_hash": "sha256:...",
+      "expires_at": "2026-06-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+Missing matches deny by default. `destructive`, `production`, and `financial`
+pre-approvals require an exact `max_payload_hash` unless the policy explicitly
+sets `allow_narrow_match: true`.
+
 ## Proxy Identity Storage
 
 `agentveil-mcp-proxy init` encrypts the local proxy identity by default. In an
