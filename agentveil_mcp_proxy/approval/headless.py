@@ -56,11 +56,11 @@ class HeadlessPreApproval:
         expires_at = _parse_iso_timestamp(_required_str(data.get("expires_at"), "expires_at"))
         resource_hash = _optional_str(data.get("resource_hash"), "resource_hash")
         if resource_hash is not None:
-            _require_sha256_hash(resource_hash, "resource_hash")
+            resource_hash = _require_sha256_hash(resource_hash, "resource_hash")
         resource = _optional_str(data.get("resource"), "resource")
         max_payload_hash = _optional_str(data.get("max_payload_hash"), "max_payload_hash")
         if max_payload_hash is not None:
-            _require_sha256_hash(max_payload_hash, "max_payload_hash")
+            max_payload_hash = _require_sha256_hash(max_payload_hash, "max_payload_hash")
         allow_narrow_match = data.get("allow_narrow_match", False)
         if not isinstance(allow_narrow_match, bool):
             raise HeadlessPolicyError("allow_narrow_match must be a boolean")
@@ -179,11 +179,13 @@ def _optional_str(value: Any, field: str) -> str | None:
     return value
 
 
-def _require_sha256_hash(value: str, field: str) -> None:
+def _require_sha256_hash(value: str, field: str) -> str:
     prefix = "sha256:"
     digest = value[len(prefix):] if value.startswith(prefix) else ""
+    digest = digest.lower()
     if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
         raise HeadlessPolicyError(f"{field} must be a sha256: hash")
+    return prefix + digest
 
 
 def _require_owner_only_file(path: Path) -> None:

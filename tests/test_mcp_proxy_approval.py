@@ -700,6 +700,28 @@ def test_headless_policy_validates_resource_hash_format():
         })
 
 
+def test_headless_policy_accepts_uppercase_hash_digest_for_matching():
+    config = _config(policy_rule=_write_rule(risk_class="destructive"))
+    classification = _classification(config)
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    policy = HeadlessPolicy.from_dict({
+        "headless_policy_schema_version": 1,
+        "pre_approvals": [{
+            "server": "github",
+            "tool": "create_issue",
+            "risk_class": "destructive",
+            "environment": "mcp_proxy",
+            "resource_hash": "sha256:" + classification.resource_hash.removeprefix("sha256:").upper(),
+            "max_payload_hash": "sha256:" + classification.payload_hash.removeprefix("sha256:").upper(),
+            "expires_at": expires,
+        }],
+    })
+
+    assert policy.pre_approvals[0].resource_hash == classification.resource_hash
+    assert policy.pre_approvals[0].max_payload_hash == classification.payload_hash
+    assert policy.match(classification) is not None
+
+
 def test_token_hash_in_evidence_not_raw_token(tmp_path):
     manager, store, server, _cli = _manager(tmp_path, headless=True, auto_deny=True)
     try:
@@ -846,6 +868,31 @@ def test_show_details_button_only_renders_when_config_allows():
         )
         details_url = server.register(details_prompt)
         assert "Show local details" in httpx.get(details_url).text
+    finally:
+        server.stop()
+
+
+def test_terminal_requests_are_pruned_after_retention(monkeypatch):
+    now = 1_700_000_000.0
+    monkeypatch.setattr(approval_server_module.time, "time", lambda: now)
+    server = ApprovalServer()
+    terminal_prompt = replace(_prompt("terminal"), created_at=100, expires_at=110)
+    active_prompt = _prompt("active")
+    server.start()
+    try:
+        server.register(terminal_prompt)
+        server.unregister("terminal")
+        assert server.is_terminal("terminal")
+
+        now = 1_700_000_019.0
+        assert server.is_terminal("terminal")
+
+        server.register(active_prompt)
+        now = 1_700_000_021.0
+        assert not server.is_terminal("terminal")
+        assert server.prompt_for("active") == active_prompt
+        assert server.pending_prompts() == [active_prompt]
+        assert "terminal" not in server._terminal_requests
     finally:
         server.stop()
 

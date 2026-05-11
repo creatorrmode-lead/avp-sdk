@@ -11,12 +11,15 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import secrets
 import threading
+import time
 from typing import Any
 from urllib.parse import parse_qs
 
 
 MAX_POST_BODY_BYTES = 8192
 REQUEST_SOCKET_TIMEOUT_SECONDS = 5.0
+DEFAULT_TERMINAL_REQUEST_RETENTION_SECONDS = 600.0
+MIN_TERMINAL_REQUEST_RETENTION_SECONDS = 1.0
 SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -89,7 +92,7 @@ class ApprovalServer:
         self._prompts: dict[str, ApprovalPrompt] = {}
         self._decisions: dict[str, ApprovalServerDecision] = {}
         self._decision_events: dict[str, threading.Event] = {}
-        self._terminal_requests: set[str] = set()
+        self._terminal_requests: dict[str, float] = {}
         self._httpd: _DaemonThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -155,19 +158,21 @@ class ApprovalServer:
         """Register a prompt after durable evidence persistence succeeds."""
 
         with self._lock:
+            self._prune_terminal_requests_locked()
             self._prompts[prompt.request_id] = prompt
             self._decision_events[prompt.request_id] = threading.Event()
-            self._terminal_requests.discard(prompt.request_id)
+            self._terminal_requests.pop(prompt.request_id, None)
         return self.approval_url(prompt.request_id)
 
     def unregister(self, request_id: str) -> None:
         """Mark an approval URL as no longer actionable."""
 
         with self._lock:
-            self._prompts.pop(request_id, None)
+            self._prune_terminal_requests_locked()
+            prompt = self._prompts.pop(request_id, None)
             self._decisions.pop(request_id, None)
             self._decision_events.pop(request_id, None)
-            self._terminal_requests.add(request_id)
+            self._terminal_requests[request_id] = self._terminal_retain_until(prompt)
 
     def wait_for_decision(self, request_id: str, *, timeout: float) -> ApprovalServerDecision | None:
         """Wait for an approve/deny POST for one request."""
@@ -185,6 +190,7 @@ class ApprovalServer:
         """Return currently pending prompts for the token-authenticated list page."""
 
         with self._lock:
+            self._prune_terminal_requests_locked()
             decided = set(self._decisions)
             terminal = set(self._terminal_requests)
             return [
@@ -197,6 +203,7 @@ class ApprovalServer:
         """Return one pending prompt."""
 
         with self._lock:
+            self._prune_terminal_requests_locked()
             if request_id in self._decisions or request_id in self._terminal_requests:
                 return None
             return self._prompts.get(request_id)
@@ -205,6 +212,7 @@ class ApprovalServer:
         """Return whether a prompt was already decided or expired."""
 
         with self._lock:
+            self._prune_terminal_requests_locked()
             return request_id in self._terminal_requests or request_id in self._decisions
 
     def submit_decision(self, request_id: str, decision: str, approval_scope: str) -> None:
@@ -215,6 +223,7 @@ class ApprovalServer:
         if approval_scope not in {"exact", "similar_5m"}:
             raise ApprovalServerError("approval scope is unsupported")
         with self._lock:
+            self._prune_terminal_requests_locked()
             if request_id in self._terminal_requests or request_id in self._decisions:
                 raise ApprovalServerGone("approval already decided")
             prompt = self._prompts.get(request_id)
@@ -245,6 +254,26 @@ class ApprovalServer:
         if morsel is None:
             return False
         return hmac.compare_digest(morsel.value, self._cookie_value())
+
+    def _terminal_retain_until(self, prompt: ApprovalPrompt | None) -> float:
+        now = time.time()
+        retention = DEFAULT_TERMINAL_REQUEST_RETENTION_SECONDS
+        if prompt is not None:
+            retention = max(
+                float(prompt.expires_at - prompt.created_at) * 2.0,
+                MIN_TERMINAL_REQUEST_RETENTION_SECONDS,
+            )
+        return now + retention
+
+    def _prune_terminal_requests_locked(self) -> None:
+        now = time.time()
+        expired = [
+            request_id
+            for request_id, retain_until in self._terminal_requests.items()
+            if retain_until <= now
+        ]
+        for request_id in expired:
+            self._terminal_requests.pop(request_id, None)
 
 
 class _ApprovalRequestHandler(BaseHTTPRequestHandler):
