@@ -33,6 +33,10 @@ class ApprovalServerError(RuntimeError):
     """Raised when the local approval server cannot operate safely."""
 
 
+class ApprovalServerGone(ApprovalServerError):
+    """Raised when a submitted approval URL is no longer actionable."""
+
+
 @dataclass(frozen=True)
 class ApprovalPrompt:
     """Privacy-filtered approval prompt data served by the local UI."""
@@ -79,6 +83,7 @@ class ApprovalServer:
         self._prompts: dict[str, ApprovalPrompt] = {}
         self._decisions: dict[str, ApprovalServerDecision] = {}
         self._decision_events: dict[str, threading.Event] = {}
+        self._terminal_requests: set[str] = set()
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -146,7 +151,17 @@ class ApprovalServer:
         with self._lock:
             self._prompts[prompt.request_id] = prompt
             self._decision_events[prompt.request_id] = threading.Event()
+            self._terminal_requests.discard(prompt.request_id)
         return self.approval_url(prompt.request_id)
+
+    def unregister(self, request_id: str) -> None:
+        """Mark an approval URL as no longer actionable."""
+
+        with self._lock:
+            self._prompts.pop(request_id, None)
+            self._decisions.pop(request_id, None)
+            self._decision_events.pop(request_id, None)
+            self._terminal_requests.add(request_id)
 
     def wait_for_decision(self, request_id: str, *, timeout: float) -> ApprovalServerDecision | None:
         """Wait for an approve/deny POST for one request."""
@@ -165,17 +180,26 @@ class ApprovalServer:
 
         with self._lock:
             decided = set(self._decisions)
+            terminal = set(self._terminal_requests)
             return [
                 prompt
                 for request_id, prompt in sorted(self._prompts.items())
-                if request_id not in decided
+                if request_id not in decided and request_id not in terminal
             ]
 
     def prompt_for(self, request_id: str) -> ApprovalPrompt | None:
         """Return one pending prompt."""
 
         with self._lock:
+            if request_id in self._decisions or request_id in self._terminal_requests:
+                return None
             return self._prompts.get(request_id)
+
+    def is_terminal(self, request_id: str) -> bool:
+        """Return whether a prompt was already decided or expired."""
+
+        with self._lock:
+            return request_id in self._terminal_requests or request_id in self._decisions
 
     def submit_decision(self, request_id: str, decision: str, approval_scope: str) -> None:
         """Record a local approve/deny POST."""
@@ -185,6 +209,8 @@ class ApprovalServer:
         if approval_scope not in {"exact", "similar_5m"}:
             raise ApprovalServerError("approval scope is unsupported")
         with self._lock:
+            if request_id in self._terminal_requests or request_id in self._decisions:
+                raise ApprovalServerGone("approval already decided")
             prompt = self._prompts.get(request_id)
             if prompt is None:
                 raise ApprovalServerError("pending approval not found")
@@ -231,7 +257,10 @@ class _ApprovalRequestHandler(BaseHTTPRequestHandler):
             return
         prompt = self.server_owner.prompt_for(request_id)
         if prompt is None:
-            self._send_text(HTTPStatus.NOT_FOUND, "not found")
+            if self.server_owner.is_terminal(request_id):
+                self._send_text(HTTPStatus.GONE, "approval already decided")
+            else:
+                self._send_text(HTTPStatus.NOT_FOUND, "not found")
             return
         self._send_html(
             HTTPStatus.OK,
@@ -246,7 +275,10 @@ class _ApprovalRequestHandler(BaseHTTPRequestHandler):
             return
         prompt = self.server_owner.prompt_for(request_id)
         if prompt is None:
-            self._send_text(HTTPStatus.NOT_FOUND, "not found")
+            if self.server_owner.is_terminal(request_id):
+                self._send_text(HTTPStatus.GONE, "approval already decided")
+            else:
+                self._send_text(HTTPStatus.NOT_FOUND, "not found")
             return
         if not self.server_owner._valid_cookie(self.headers.get("Cookie")):
             self._send_text(HTTPStatus.FORBIDDEN, "forbidden")
@@ -262,6 +294,9 @@ class _ApprovalRequestHandler(BaseHTTPRequestHandler):
         scope = (form.get("approval_scope") or ["exact"])[0]
         try:
             self.server_owner.submit_decision(request_id, decision, scope)
+        except ApprovalServerGone:
+            self._send_text(HTTPStatus.GONE, "approval already decided")
+            return
         except ApprovalServerError:
             self._send_text(HTTPStatus.FORBIDDEN, "forbidden")
             return
@@ -394,5 +429,6 @@ __all__ = [
     "ApprovalServer",
     "ApprovalServerDecision",
     "ApprovalServerError",
+    "ApprovalServerGone",
     "SECURITY_HEADERS",
 ]

@@ -443,10 +443,11 @@ on_timeout: deny
 Per-policy override:
 
 ```yaml
-on_timeout: deny | allow | hang
+on_timeout: deny | hang
 ```
 
-Default must be deny for destructive, production, and financial actions.
+Default must be deny for destructive, production, and financial actions. `allow` is
+not supported because inaction must not authorize downstream execution.
 
 ## Minimal Proxy CLI
 

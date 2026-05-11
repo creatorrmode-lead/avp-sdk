@@ -22,7 +22,7 @@ from agentveil_mcp_proxy.evidence import (
     ApprovalStatus,
     PendingApproval,
 )
-from agentveil_mcp_proxy.policy import PolicyRule, ProxyConfig, RiskClass
+from agentveil_mcp_proxy.policy import PolicyRule, ProxyConfig, RiskClass, TimeoutAction
 from agentveil_mcp_proxy.runtime_gate import DEFAULT_RUNTIME_ENVIRONMENT, RuntimeGateDecision
 
 
@@ -94,6 +94,16 @@ class ApprovalManager:
         expires_at = now + timeout
         request_id = str(uuid.uuid4())
         scope_allowed = self._scope_expansion_allowed(classification)
+        active_similar_grant = None
+        if scope_allowed:
+            active_similar_grant = self.evidence_store.find_active_similar_grant(
+                downstream_server=classification.server,
+                tool_name=classification.tool,
+                policy_rule_id=classification.policy_evaluation.policy_rule_id,
+                risk_class=classification.risk_class.value,
+                resource_hash=classification.resource_hash,
+                now_timestamp=now,
+            )
         prompt = self._prompt_for(
             classification,
             request_id=request_id,
@@ -106,12 +116,18 @@ class ApprovalManager:
             request_id=request_id,
             created_at=now,
             expires_at=expires_at,
-            runtime_decision=runtime_decision,
+            runtime_decision=None if active_similar_grant is not None else runtime_decision,
+            granted_by_request_id=(
+                None if active_similar_grant is None else active_similar_grant.request_id
+            ),
         )
         try:
             self.evidence_store.write_pending(record)
         except ApprovalEvidenceError as exc:
             raise ApprovalFlowError("approval evidence persistence failed") from exc
+
+        if active_similar_grant is not None:
+            return self._approve(request_id, APPROVAL_SCOPE_EXACT, now, "scope_cache_hit")
 
         if self.auto_deny:
             return self._deny(request_id, "headless_auto_deny")
@@ -128,8 +144,16 @@ class ApprovalManager:
 
         url = self.approval_server.register(prompt)
         self._notify(prompt, url)
-        decision = self.approval_server.wait_for_decision(request_id, timeout=float(timeout))
-        if decision is None:
+        decision = None
+        while decision is None:
+            decision = self.approval_server.wait_for_decision(
+                request_id,
+                timeout=min(float(timeout), 60.0),
+            )
+            if decision is not None:
+                break
+            if self.config.approval.on_timeout is TimeoutAction.HANG:
+                continue
             try:
                 self.evidence_store.transition(
                     request_id,
@@ -138,6 +162,7 @@ class ApprovalManager:
                 )
             except ApprovalEvidenceTransitionError:
                 pass
+            self.approval_server.unregister(request_id)
             return ApprovalOutcome(request_id, ApprovalStatus.EXPIRED.value, "approval_timeout")
         if decision.decision == "approve":
             return self._approve(
@@ -204,6 +229,7 @@ class ApprovalManager:
             granted_scope_expires_at=granted_expires,
             user_decision_timestamp=decided_at,
         )
+        self.approval_server.unregister(request_id)
         return ApprovalOutcome(request_id, ApprovalStatus.APPROVED.value, reason, approval_scope)
 
     def _deny(self, request_id: str, reason: str) -> ApprovalOutcome:
@@ -217,6 +243,7 @@ class ApprovalManager:
             user_decision_timestamp=now,
             error_class=reason,
         )
+        self.approval_server.unregister(request_id)
         return ApprovalOutcome(request_id, ApprovalStatus.DENIED.value, reason)
 
     def _notify(self, prompt: ApprovalPrompt, url: str) -> None:
@@ -245,6 +272,7 @@ class ApprovalManager:
         created_at: int,
         expires_at: int,
         runtime_decision: RuntimeGateDecision | None,
+        granted_by_request_id: str | None = None,
     ) -> PendingApproval:
         return PendingApproval(
             request_id=request_id,
@@ -266,6 +294,7 @@ class ApprovalManager:
             decision_receipt_sha256=None if runtime_decision is None else runtime_decision.receipt_digest,
             approval_token_hash=self.approval_server.token_hash,
             matched_policy_rule=classification.policy_evaluation.policy_rule_id,
+            granted_by_request_id=granted_by_request_id,
         )
 
     def _prompt_for(

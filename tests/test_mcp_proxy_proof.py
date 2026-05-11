@@ -187,11 +187,15 @@ def test_chain_integrity_breaks_if_record_field_tampered(tmp_path):
         ApprovalEvidenceStore(db_path)
 
 
-def test_schema_v1_migrates_to_v2_atomically_with_chain_backfill(tmp_path):
+def test_schema_v1_migrates_to_v3_atomically_with_chain_backfill(tmp_path):
     db_path = tmp_path / "evidence.sqlite"
     conn = sqlite3.connect(str(db_path))
     try:
-        columns = [column for column in asdict(_record()).keys() if column != "prev_event_hash"]
+        columns = [
+            column
+            for column in asdict(_record()).keys()
+            if column not in {"prev_event_hash", "granted_by_request_id"}
+        ]
         conn.execute("CREATE TABLE evidence_schema_version (version INTEGER NOT NULL)")
         conn.execute("INSERT INTO evidence_schema_version (version) VALUES (1)")
         conn.execute(
@@ -201,6 +205,7 @@ def test_schema_v1_migrates_to_v2_atomically_with_chain_backfill(tmp_path):
         )
         values = asdict(_record("req-v1", created_at=10))
         values.pop("prev_event_hash")
+        values.pop("granted_by_request_id")
         conn.execute(
             f"INSERT INTO pending_approvals ({', '.join(columns)}) "
             f"VALUES ({', '.join('?' for _ in columns)})",
@@ -220,15 +225,15 @@ def test_schema_v1_migrates_to_v2_atomically_with_chain_backfill(tmp_path):
         version = conn.execute("SELECT version FROM evidence_schema_version").fetchone()[0]
     finally:
         conn.close()
-    assert version == 2
+    assert version == 3
 
 
-def test_schema_v2_rejects_forward_incompatible_version(tmp_path):
+def test_schema_v4_rejects_forward_incompatible_version(tmp_path):
     db_path = tmp_path / "evidence.sqlite"
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute("CREATE TABLE evidence_schema_version (version INTEGER NOT NULL)")
-        conn.execute("INSERT INTO evidence_schema_version (version) VALUES (3)")
+        conn.execute("INSERT INTO evidence_schema_version (version) VALUES (4)")
         conn.commit()
     finally:
         conn.close()
@@ -349,6 +354,30 @@ def test_verify_passes_on_valid_bundle(tmp_path):
     assert result.valid is True
     assert result.record_count == 1
     assert result.signed_receipt_count == 1
+    assert result.unverified_receipt_count == 0
+
+
+def test_export_surfaces_unverified_receipt_count_when_fetch_fails(tmp_path):
+    receipt_jcs = _decision_receipt()
+    digest = hashlib.sha256(receipt_jcs.encode("utf-8")).hexdigest()
+    with _store(tmp_path) as store:
+        store.write_pending(_record(
+            "req-fetch-fail",
+            decision_audit_id="audit-1",
+            decision_receipt_sha256=digest,
+        ))
+        bundle = build_evidence_bundle(
+            store,
+            proxy_identity_did="did:key:z6Mkproxy",
+            trusted_signer_dids=[BACKEND_DID],
+            receipt_fetcher=lambda _audit_id: (_ for _ in ()).throw(RuntimeError("offline")),
+        )
+
+    assert bundle["signed_receipts"] == {}
+    assert bundle["unverified_receipt_count"] == 1
+    result = verify_evidence_bundle(bundle)
+    assert result.valid is True
+    assert result.unverified_receipt_count == 1
 
 
 def test_verify_fails_on_record_hash_mismatch(tmp_path):
@@ -445,7 +474,15 @@ def test_verify_human_and_json_output_formats(tmp_path):
 
     structured = io.StringIO()
     assert verify_evidence(bundle_path=bundle_path, output_format="json", out=structured) == 0
-    assert json.loads(structured.getvalue())["status"] == "ok"
+    payload = json.loads(structured.getvalue())
+    assert payload["status"] == "ok"
+    assert payload["unverified_receipt_count"] == 0
+
+    bundle["unverified_receipt_count"] = 1
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    warn = io.StringIO()
+    assert verify_evidence(bundle_path=bundle_path, out=warn) == 0
+    assert "WARN: 1 records have decision_audit_id" in warn.getvalue()
 
 
 def test_verify_does_not_leak_payload_data_in_error_messages(tmp_path):

@@ -516,4 +516,5 @@ def test_doctor_reports_circuit_state(tmp_path):
 
     assert doctor_proxy(home=home, passphrase=TEST_PASSPHRASE, out=out) == 0
 
-    assert "OK: circuit breaker closed" in out.getvalue()
+    assert "OK: circuit breaker thresholds" in out.getvalue()
+    assert "closed" not in out.getvalue()

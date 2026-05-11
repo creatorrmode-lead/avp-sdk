@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -54,11 +55,19 @@ class HeadlessPreApproval:
         risk_class = _required_str(data.get("risk_class"), "risk_class")
         expires_at = _parse_iso_timestamp(_required_str(data.get("expires_at"), "expires_at"))
         resource_hash = _optional_str(data.get("resource_hash"), "resource_hash")
+        if resource_hash is not None:
+            _require_sha256_hash(resource_hash, "resource_hash")
         resource = _optional_str(data.get("resource"), "resource")
         max_payload_hash = _optional_str(data.get("max_payload_hash"), "max_payload_hash")
+        if max_payload_hash is not None:
+            _require_sha256_hash(max_payload_hash, "max_payload_hash")
         allow_narrow_match = data.get("allow_narrow_match", False)
         if not isinstance(allow_narrow_match, bool):
             raise HeadlessPolicyError("allow_narrow_match must be a boolean")
+        if risk_class in _HIGH_RISK and resource_hash is None and resource is None:
+            raise HeadlessPolicyError(
+                "destructive, production, and financial pre-approvals require resource or resource_hash"
+            )
         if risk_class in _HIGH_RISK and max_payload_hash is None and not allow_narrow_match:
             raise HeadlessPolicyError(
                 "destructive, production, and financial pre-approvals require max_payload_hash"
@@ -91,6 +100,8 @@ class HeadlessPreApproval:
         if self.environment != environment:
             return False
         if self.risk_class != classification.risk_class.value:
+            return False
+        if self.risk_class in _HIGH_RISK and self.resource_hash is None and self.resource is None:
             return False
         if self.resource_hash is not None and self.resource_hash != classification.resource_hash:
             return False
@@ -128,8 +139,10 @@ class HeadlessPolicy:
     def from_file(cls, path: Path) -> "HeadlessPolicy":
         """Load a JSON headless policy file."""
 
+        expanded = path.expanduser()
+        _require_owner_only_file(expanded)
         try:
-            data = json.loads(path.expanduser().read_text(encoding="utf-8"))
+            data = json.loads(expanded.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise HeadlessPolicyError(f"headless policy JSON unavailable: {path}") from exc
         if not isinstance(data, Mapping):
@@ -164,6 +177,26 @@ def _optional_str(value: Any, field: str) -> str | None:
     if not isinstance(value, str) or not value:
         raise HeadlessPolicyError(f"{field} must be a non-empty string")
     return value
+
+
+def _require_sha256_hash(value: str, field: str) -> None:
+    prefix = "sha256:"
+    digest = value[len(prefix):] if value.startswith(prefix) else ""
+    if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+        raise HeadlessPolicyError(f"{field} must be a sha256: hash")
+
+
+def _require_owner_only_file(path: Path) -> None:
+    if os.name == "nt":
+        return
+    try:
+        mode = path.stat().st_mode
+    except OSError as exc:
+        raise HeadlessPolicyError(f"headless policy JSON unavailable: {path}") from exc
+    if mode & 0o077:
+        raise HeadlessPolicyError(
+            "headless policy file permissions must be owner-only (0o600 or 0o400)"
+        )
 
 
 def _parse_iso_timestamp(value: str) -> int:

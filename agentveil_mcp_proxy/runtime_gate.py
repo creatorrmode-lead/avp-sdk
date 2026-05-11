@@ -38,6 +38,14 @@ DECISION_WAITING = "WAITING_FOR_HUMAN_APPROVAL"
 
 _DECISION_RECEIPT_SCHEMAS = {"decision_receipt/1", "decision_receipt/2"}
 _RUNTIME_DECISIONS = {DECISION_ALLOW, DECISION_BLOCK, DECISION_WAITING}
+_REQUIRED_RECEIPT_FIELDS = {
+    "action",
+    "resource",
+    "environment",
+    "payload_hash",
+    "client_risk_class",
+    "client_policy_context_hash",
+}
 
 
 class RuntimeGateError(RuntimeError):
@@ -253,26 +261,28 @@ class RuntimeGateClient:
         decision = body.get("decision")
         if decision not in _RUNTIME_DECISIONS:
             raise RuntimeGateUntrustedError("runtime decision unsupported")
+        audit_id = body.get("audit_id")
+        if not isinstance(audit_id, str) or not audit_id:
+            raise RuntimeGateUntrustedError("runtime decision audit_id missing")
         response_decision = response.get("decision")
         if isinstance(response_decision, str) and response_decision != decision:
             raise RuntimeGateUntrustedError("runtime decision response mismatch")
         response_audit_id = response.get("audit_id")
         if (
             isinstance(response_audit_id, str)
-            and isinstance(body.get("audit_id"), str)
-            and response_audit_id != body["audit_id"]
+            and response_audit_id != audit_id
         ):
             raise RuntimeGateUntrustedError("runtime decision audit mismatch")
 
         agent_did = getattr(self.agent, "did", None)
         if isinstance(body.get("agent_did"), str) and agent_did and body["agent_did"] != agent_did:
             raise RuntimeGateUntrustedError("runtime decision agent mismatch")
-        _assert_receipt_field(body, "action", request.action)
-        _assert_receipt_field(body, "resource", request.resource)
-        _assert_receipt_field(body, "environment", request.environment)
-        _assert_receipt_field(body, "payload_hash", request.payload_hash)
-        _assert_receipt_field(body, "client_risk_class", request.risk_class)
-        _assert_receipt_field(
+        _assert_required_receipt_field(body, "action", request.action)
+        _assert_required_receipt_field(body, "resource", request.resource)
+        _assert_required_receipt_field(body, "environment", request.environment)
+        _assert_required_receipt_field(body, "payload_hash", request.payload_hash)
+        _assert_required_receipt_field(body, "client_risk_class", request.risk_class)
+        _assert_required_receipt_field(
             body,
             "client_policy_context_hash",
             request.policy_context_hash,
@@ -306,9 +316,13 @@ def _optional_str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _assert_receipt_field(body: Mapping[str, Any], field: str, expected: str) -> None:
+def _assert_required_receipt_field(body: Mapping[str, Any], field: str, expected: str) -> None:
+    if field not in _REQUIRED_RECEIPT_FIELDS:
+        raise RuntimeGateUntrustedError(f"runtime decision {field} is not a required field")
     actual = body.get(field)
-    if actual is not None and actual != expected:
+    if not isinstance(actual, str) or not actual:
+        raise RuntimeGateUntrustedError(f"runtime decision {field} missing")
+    if actual != expected:
         raise RuntimeGateUntrustedError(f"runtime decision {field} mismatch")
 
 

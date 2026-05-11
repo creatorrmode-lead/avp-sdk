@@ -342,7 +342,7 @@ def test_schema_version_mismatch_refuses_to_open_for_forward_incompatible(tmp_pa
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute("CREATE TABLE evidence_schema_version (version INTEGER NOT NULL)")
-        conn.execute("INSERT INTO evidence_schema_version (version) VALUES (3)")
+        conn.execute("INSERT INTO evidence_schema_version (version) VALUES (4)")
         conn.commit()
     finally:
         conn.close()
@@ -350,6 +350,46 @@ def test_schema_version_mismatch_refuses_to_open_for_forward_incompatible(tmp_pa
 
     with pytest.raises(ApprovalEvidenceSchemaError):
         ApprovalEvidenceStore(db_path)
+
+
+def test_schema_v2_migrates_to_v3_with_granted_by_column_without_data_loss(tmp_path):
+    db_path = tmp_path / "evidence.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        columns = [column for column in asdict(_record()).keys() if column != "granted_by_request_id"]
+        conn.execute("CREATE TABLE evidence_schema_version (version INTEGER NOT NULL)")
+        conn.execute("INSERT INTO evidence_schema_version (version) VALUES (2)")
+        conn.execute(
+            "CREATE TABLE pending_approvals ("
+            + ", ".join(f"{column} TEXT" for column in columns)
+            + ", PRIMARY KEY(request_id))"
+        )
+        values = asdict(_record("req-v2", created_at=10))
+        values.pop("granted_by_request_id")
+        conn.execute(
+            f"INSERT INTO pending_approvals ({', '.join(columns)}) "
+            f"VALUES ({', '.join('?' for _ in columns)})",
+            [values[column] for column in columns],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    os.chmod(db_path, 0o600)
+
+    with ApprovalEvidenceStore(db_path) as store:
+        migrated = store.get_pending("req-v2")
+
+    assert migrated is not None
+    assert migrated.payload_hash == PAYLOAD_HASH
+    assert migrated.granted_by_request_id is None
+    conn = sqlite3.connect(str(db_path))
+    try:
+        version = conn.execute("SELECT version FROM evidence_schema_version").fetchone()[0]
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_approvals)")}
+    finally:
+        conn.close()
+    assert version == 3
+    assert "granted_by_request_id" in columns
 
 
 def test_no_backend_construction_during_evidence_operations(tmp_path, monkeypatch):

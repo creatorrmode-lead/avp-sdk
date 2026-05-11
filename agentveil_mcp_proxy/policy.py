@@ -62,7 +62,6 @@ class TimeoutAction(str, Enum):
     """Approval timeout behavior."""
 
     DENY = "deny"
-    ALLOW = "allow"
     HANG = "hang"
 
 
@@ -323,12 +322,18 @@ class ApprovalConfig:
     def from_dict(cls, data: Mapping[str, Any] | None = None) -> "ApprovalConfig":
         data = _require_mapping(data or {}, "approval")
         _reject_unknown(data, {"approval_timeout_seconds", "on_timeout"}, "approval")
+        timeout_action = data.get("on_timeout", "deny")
+        if timeout_action == "allow":
+            raise ProxyConfigError(
+                "approval.on_timeout=allow removed; use deny or hang. "
+                "allow created approval-bypass-via-inaction risk and is no longer supported."
+            )
         return cls(
             approval_timeout_seconds=_positive_int(
                 data.get("approval_timeout_seconds", 300),
                 "approval.approval_timeout_seconds",
             ),
-            on_timeout=_enum(TimeoutAction, data.get("on_timeout", "deny"), "approval.on_timeout"),
+            on_timeout=_enum(TimeoutAction, timeout_action, "approval.on_timeout"),
         )
 
 

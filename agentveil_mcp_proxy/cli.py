@@ -667,9 +667,10 @@ def doctor_proxy(
         print(f"OK: control grant {grant_path}", file=out)
         print(f"OK: trusted signers {len(config.avp.trusted_signer_dids)}", file=out)
         print(
-            "OK: circuit breaker closed "
-            f"(threshold {config.circuit_breaker.failures_before_open}, "
-            f"cooldown {config.circuit_breaker.cooldown_seconds}s)",
+            "OK: circuit breaker thresholds "
+            f"({config.circuit_breaker.failures_before_open} failures, "
+            f"{config.circuit_breaker.window_seconds}s window, "
+            f"{config.circuit_breaker.cooldown_seconds}s cooldown)",
             file=out,
         )
         for warning in warnings:
@@ -856,6 +857,14 @@ def export_evidence(
         f"{len(bundle['signed_receipts'])} signed receipts)",
         file=out,
     )
+    unverified = int(bundle.get("unverified_receipt_count", 0))
+    if unverified:
+        print(
+            "WARN: "
+            f"{unverified} records have decision_audit_id but no matching signed receipt in bundle "
+            "(fetch failed or digest mismatch)",
+            file=out,
+        )
     return bundle
 
 
@@ -878,6 +887,7 @@ def verify_evidence(
             "status": "ok",
             "record_count": result.record_count,
             "signed_receipt_count": result.signed_receipt_count,
+            "unverified_receipt_count": result.unverified_receipt_count,
             "chain_root_hash": result.chain_root_hash,
         }, sort_keys=True), file=out)
     else:
@@ -886,6 +896,13 @@ def verify_evidence(
             f"{result.record_count} records, {result.signed_receipt_count} signed receipts",
             file=out,
         )
+        if result.unverified_receipt_count:
+            print(
+                "WARN: "
+                f"{result.unverified_receipt_count} records have decision_audit_id "
+                "but no matching signed receipt in bundle",
+                file=out,
+            )
     return 0
 
 
@@ -931,6 +948,11 @@ def run_proxy(
     out = out or sys.stdout
     client_in = client_in or sys.stdin
     err = err or sys.stderr
+    if auto_deny and not headless:
+        raise ProxyCliError(
+            "--auto-deny requires --headless; standalone auto-deny conflicts with interactive UI assumption",
+            exit_code=2,
+        )
     paths = proxy_paths(home, config_path)
     config = load_proxy_config(paths.config_path)
     identity_path = paths.identity_path(config.avp.agent_name)

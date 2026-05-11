@@ -25,7 +25,7 @@ from typing import Any, Iterable, Mapping
 import jcs
 
 
-EVIDENCE_SCHEMA_VERSION = 2
+EVIDENCE_SCHEMA_VERSION = 3
 DEFAULT_MAX_RECORDS = 10_000
 GENESIS_PREV_EVENT_HASH = "sha256:" + hashlib.sha256(
     b"agentveil_mcp_proxy/evidence/genesis-v1"
@@ -125,6 +125,7 @@ class PendingApproval:
     granted_scope_expires_at: int | None = None
     matched_policy_rule: str | None = None
     user_decision_timestamp: int | None = None
+    granted_by_request_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,7 @@ _OPTIONAL_COLUMNS = {
     "granted_scope_expires_at",
     "matched_policy_rule",
     "user_decision_timestamp",
+    "granted_by_request_id",
 }
 _TRANSITION_FIELDS = {
     "decision_audit_id",
@@ -169,6 +171,7 @@ _TRANSITION_FIELDS = {
     "granted_scope_expires_at",
     "matched_policy_rule",
     "user_decision_timestamp",
+    "granted_by_request_id",
 }
 _HASH_COLUMNS = {
     "resource_hash",
@@ -397,6 +400,47 @@ class ApprovalEvidenceStore:
             ).fetchall()
         return [_row_to_record(row) for row in rows]
 
+    def find_active_similar_grant(
+        self,
+        *,
+        downstream_server: str,
+        tool_name: str,
+        policy_rule_id: str | None,
+        risk_class: str,
+        resource_hash: str | None,
+        now_timestamp: int,
+    ) -> PendingApproval | None:
+        """Return a still-active similar-scope approval grant for an exact match."""
+
+        reusable_statuses = (
+            ApprovalStatus.APPROVED.value,
+            ApprovalStatus.EXECUTED.value,
+            ApprovalStatus.BLOCKED.value,
+            ApprovalStatus.ERROR.value,
+        )
+        placeholders = ", ".join("?" for _ in reusable_statuses)
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {', '.join(_COLUMNS)} FROM pending_approvals "
+                f"WHERE status IN ({placeholders}) "
+                "AND approval_scope = ? AND granted_scope_expires_at > ? "
+                "AND downstream_server = ? AND tool_name = ? AND risk_class = ? "
+                "AND policy_rule_id IS ? AND resource_hash IS ? "
+                "ORDER BY granted_scope_expires_at DESC, created_at DESC, request_id DESC "
+                "LIMIT 1",
+                (
+                    *reusable_statuses,
+                    "similar_5m",
+                    int(now_timestamp),
+                    downstream_server,
+                    tool_name,
+                    risk_class,
+                    policy_rule_id,
+                    resource_hash,
+                ),
+            ).fetchone()
+        return None if row is None else _row_to_record(row)
+
     def vacuum_terminal_records(self, *, before_timestamp: int) -> int:
         """Delete old terminal records and reconstruct the remaining chain."""
 
@@ -498,12 +542,13 @@ class ApprovalEvidenceStore:
             "matched_policy_rule": "TEXT NULL",
             "user_decision_timestamp": "INTEGER NULL",
             "prev_event_hash": "TEXT NULL",
+            "granted_by_request_id": "TEXT NULL",
         }.items():
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {column_type}")
 
     def _migrate_schema_locked(self, version: int) -> None:
-        if version == 1:
+        if version in {1, 2}:
             self._rebuild_chain_locked()
             self._conn.execute("DELETE FROM evidence_schema_version")
             self._conn.execute(
@@ -667,7 +712,8 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     approval_scope TEXT NULL,
     granted_scope_expires_at INTEGER NULL,
     matched_policy_rule TEXT NULL,
-    user_decision_timestamp INTEGER NULL
+    user_decision_timestamp INTEGER NULL,
+    granted_by_request_id TEXT NULL
 )
 """
 

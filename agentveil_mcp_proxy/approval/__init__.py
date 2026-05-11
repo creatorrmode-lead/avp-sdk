@@ -20,6 +20,7 @@ from agentveil_mcp_proxy.approval.server import (
     ApprovalServer,
     ApprovalServerDecision,
     ApprovalServerError,
+    ApprovalServerGone,
 )
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "ApprovalServer",
     "ApprovalServerDecision",
     "ApprovalServerError",
+    "ApprovalServerGone",
     "HeadlessPolicy",
     "HeadlessPolicyError",
     "HeadlessPreApproval",

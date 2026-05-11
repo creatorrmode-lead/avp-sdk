@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import base58
 import httpx
 import jcs
+import pytest
 from nacl.signing import SigningKey
 
 from agentveil.agent import AVPAgent
@@ -30,6 +31,7 @@ from agentveil_mcp_proxy.runtime_gate import (
     RuntimeGateClient,
     RuntimeGateDecision,
     RuntimeGateUnavailableError,
+    RuntimeGateUntrustedError,
 )
 
 
@@ -145,6 +147,7 @@ def _decision_receipt(
     seed: bytes = BACKEND_SEED,
     backend_risk_class: str = "unknown",
     backend_policy_context_hash: str = "b" * 64,
+    omit_fields: tuple[str, ...] = (),
 ) -> str:
     body = {
         "schema_version": "decision_receipt/2",
@@ -162,15 +165,24 @@ def _decision_receipt(
     }
     if approval_id is not None:
         body["approval_id"] = approval_id
+    for field in omit_fields:
+        body.pop(field, None)
     return _sign_jcs(body, seed=seed)
 
 
 class RecordingAgent:
     did = AGENT_DID
 
-    def __init__(self, *, decision: str = "ALLOW", seed: bytes = BACKEND_SEED):
+    def __init__(
+        self,
+        *,
+        decision: str = "ALLOW",
+        seed: bytes = BACKEND_SEED,
+        omit_receipt_fields: tuple[str, ...] = (),
+    ):
         self.decision = decision
         self.seed = seed
+        self.omit_receipt_fields = omit_receipt_fields
         self.calls: list[dict] = []
 
     def runtime_evaluate(self, **kwargs):
@@ -187,6 +199,7 @@ class RecordingAgent:
                     else None
                 ),
                 seed=self.seed,
+                omit_fields=self.omit_receipt_fields,
             ),
         }
 
@@ -445,6 +458,27 @@ def test_unverified_receipt_is_rejected_without_downstream_execution(tmp_path):
     }
     assert SECRET not in client_out.getvalue()
     assert not log_path.exists()
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "action",
+        "resource",
+        "environment",
+        "payload_hash",
+        "client_risk_class",
+        "client_policy_context_hash",
+        "audit_id",
+    ],
+)
+def test_decision_receipt_missing_required_field_is_rejected(missing_field):
+    config = _config()
+    agent = RecordingAgent(omit_receipt_fields=(missing_field,))
+    client = RuntimeGateClient(agent=agent, config=config, control_grant={"id": "grant"})
+
+    with pytest.raises(RuntimeGateUntrustedError, match="missing"):
+        client.evaluate(_classification(config))
 
 
 def test_backend_timeout_error_is_sanitized_and_bounded(tmp_path):

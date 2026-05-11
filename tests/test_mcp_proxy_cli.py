@@ -13,12 +13,14 @@ from agentveil_mcp_proxy.cli import (
     AGENTVEIL_DEV_SIGNER_DIDS,
     ProxyCliError,
     doctor_proxy,
+    export_evidence,
     init_proxy,
     main,
     proxy_paths,
     reissue_grant,
     run_proxy,
 )
+from agentveil_mcp_proxy.evidence import ApprovalEvidenceStore, PendingApproval
 from agentveil_mcp_proxy.policy import ProxyConfig
 
 
@@ -36,6 +38,28 @@ def _load(path: Path) -> dict:
 
 def _secret_material(identity: dict) -> str:
     return identity.get("private_key_hex") or identity.get("private_key_encrypted") or identity.get("encrypted_blob") or ""
+
+
+def _evidence_record(request_id: str = "req-1") -> PendingApproval:
+    return PendingApproval(
+        request_id=request_id,
+        session_id="session-1",
+        client_id="cursor",
+        downstream_server="github",
+        tool_name="create_issue",
+        action_class="write",
+        risk_class="write",
+        resource_hash="sha256:" + "a" * 64,
+        payload_hash="sha256:" + "b" * 64,
+        policy_id="github-default",
+        policy_rule_id="rule-write",
+        policy_context_hash="c" * 64,
+        status="pending",
+        created_at=1_700_000_000,
+        expires_at=1_700_000_300,
+        decision_audit_id="audit-1",
+        decision_receipt_sha256="d" * 64,
+    )
 
 
 def _issue_grant(result, *, valid_for: timedelta, valid_from: datetime | None = None) -> dict:
@@ -279,6 +303,31 @@ def test_run_without_downstream_config_fails_without_printing_secrets(tmp_path):
 
     assert out.getvalue() == ""
     assert secret not in out.getvalue()
+
+
+def test_run_auto_deny_requires_headless(tmp_path):
+    try:
+        run_proxy(home=tmp_path / "avp-home", auto_deny=True, out=io.StringIO())
+    except ProxyCliError as exc:
+        assert exc.exit_code == 2
+        assert "--auto-deny requires --headless" in str(exc)
+    else:
+        raise AssertionError("expected --auto-deny without --headless to fail")
+
+
+def test_export_evidence_warns_when_signed_receipts_are_not_fetched(tmp_path):
+    home = tmp_path / "avp-home"
+    result = init_proxy(home=home, agent_name="proxy", passphrase=TEST_PASSPHRASE)
+    paths = proxy_paths(home)
+    with ApprovalEvidenceStore(paths.proxy_dir / "evidence.sqlite") as store:
+        store.write_pending(_evidence_record())
+    out = io.StringIO()
+
+    bundle = export_evidence(output_path=tmp_path / "bundle.json", home=home, out=out)
+
+    assert bundle["unverified_receipt_count"] == 1
+    assert "WARN: 1 records have decision_audit_id" in out.getvalue()
+    assert _secret_material(_load(result.identity_path)) not in out.getvalue()
 
 
 def test_run_proxy_fails_clearly_on_encrypted_identity_without_passphrase(tmp_path, monkeypatch):

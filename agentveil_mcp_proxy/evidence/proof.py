@@ -43,6 +43,7 @@ class EvidenceVerificationResult:
     record_count: int
     signed_receipt_count: int
     chain_root_hash: str
+    unverified_receipt_count: int = 0
 
 
 def utc_now_iso() -> str:
@@ -81,19 +82,26 @@ def build_evidence_bundle(
     )
     signed_receipts: dict[str, str] = {}
     export_records = _bundle_records(records)
-    if receipt_fetcher is not None:
-        for record in records:
-            if not record.decision_audit_id or not record.decision_receipt_sha256:
-                continue
-            try:
-                receipt_jcs = receipt_fetcher(record.decision_audit_id)
-            except Exception:
-                continue
-            if not isinstance(receipt_jcs, str) or not receipt_jcs:
-                continue
-            digest = hashlib.sha256(receipt_jcs.encode("utf-8")).hexdigest()
-            if digest == record.decision_receipt_sha256:
-                signed_receipts[digest] = receipt_jcs
+    unverified_receipt_count = 0
+    for record in records:
+        if not record.decision_audit_id or not record.decision_receipt_sha256:
+            continue
+        if receipt_fetcher is None:
+            unverified_receipt_count += 1
+            continue
+        try:
+            receipt_jcs = receipt_fetcher(record.decision_audit_id)
+        except Exception:
+            unverified_receipt_count += 1
+            continue
+        if not isinstance(receipt_jcs, str) or not receipt_jcs:
+            unverified_receipt_count += 1
+            continue
+        digest = hashlib.sha256(receipt_jcs.encode("utf-8")).hexdigest()
+        if digest == record.decision_receipt_sha256:
+            signed_receipts[digest] = receipt_jcs
+        else:
+            unverified_receipt_count += 1
     chain_root_hash = (
         export_records[-1]["record_hash"] if export_records else GENESIS_PREV_EVENT_HASH
     )
@@ -105,6 +113,7 @@ def build_evidence_bundle(
         "chain_root_hash": chain_root_hash,
         "records": export_records,
         "signed_receipts": signed_receipts,
+        "unverified_receipt_count": unverified_receipt_count,
         "client_id": client_id,
         "filter": {
             "since_timestamp": since_timestamp,
@@ -173,6 +182,13 @@ def verify_evidence_bundle(
     receipts = bundle.get("signed_receipts", {})
     if not isinstance(receipts, dict):
         raise EvidenceVerificationError("signed_receipts must be a JSON object")
+    unverified_receipt_count = bundle.get("unverified_receipt_count", 0)
+    if (
+        not isinstance(unverified_receipt_count, int)
+        or isinstance(unverified_receipt_count, bool)
+        or unverified_receipt_count < 0
+    ):
+        raise EvidenceVerificationError("unverified_receipt_count must be a non-negative integer")
     pinned_signers = tuple(trusted_signer_dids or bundle.get("trusted_signer_dids") or ())
     if receipts and not pinned_signers:
         raise EvidenceVerificationError("trusted signer DID(s) are required")
@@ -207,6 +223,7 @@ def verify_evidence_bundle(
         record_count=len(records),
         signed_receipt_count=len(receipts),
         chain_root_hash=str(bundle.get("chain_root_hash")),
+        unverified_receipt_count=unverified_receipt_count,
     )
 
 

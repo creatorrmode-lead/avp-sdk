@@ -24,6 +24,7 @@ from agentveil_mcp_proxy.approval import (
     ApprovalNotifier,
     ApprovalPrompt,
     ApprovalServer,
+    ApprovalServerDecision,
     HeadlessPolicy,
     HeadlessPolicyError,
 )
@@ -35,7 +36,7 @@ from agentveil_mcp_proxy.evidence import (
     ApprovalStatus,
 )
 from agentveil_mcp_proxy.passthrough import DownstreamConfig, McpPassthrough
-from agentveil_mcp_proxy.policy import ProxyConfig
+from agentveil_mcp_proxy.policy import ProxyConfig, ProxyConfigError
 
 
 SECRET = "SECRET_APPROVAL_PAYLOAD"
@@ -56,6 +57,7 @@ def _config(
     privacy: dict[str, Any] | None = None,
     policy_rule: dict[str, Any] | None = None,
     approval_timeout_seconds: int = 300,
+    on_timeout: str = "deny",
 ) -> ProxyConfig:
     return ProxyConfig.from_dict({
         "proxy_config_schema_version": 1,
@@ -81,7 +83,7 @@ def _config(
         },
         "approval": {
             "approval_timeout_seconds": approval_timeout_seconds,
-            "on_timeout": "deny",
+            "on_timeout": on_timeout,
         },
         "policy": {
             "id": "approval-test",
@@ -188,6 +190,41 @@ def _post_decision(client: httpx.Client, url: str, *, decision: str, csrf: str, 
     })
 
 
+def _request_and_post(
+    manager: ApprovalManager,
+    server: ApprovalServer,
+    classification,
+    *,
+    decision: str = "approve",
+    scope: str = "exact",
+):
+    result_box: dict[str, Any] = {}
+    worker = threading.Thread(
+        target=lambda: result_box.setdefault(
+            "outcome",
+            manager.request_approval(classification, reason="local_approval_required"),
+        ),
+        daemon=True,
+    )
+    worker.start()
+    deadline = time.monotonic() + 2
+    while not server.pending_prompts() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    prompt = server.pending_prompts()[0]
+    with httpx.Client() as client:
+        csrf = _get_csrf(client, server.approval_url(prompt.request_id))
+        response = _post_decision(
+            client,
+            server.approval_url(prompt.request_id),
+            decision=decision,
+            csrf=csrf,
+            scope=scope,
+        )
+    worker.join(timeout=3)
+    assert "outcome" in result_box
+    return result_box["outcome"], prompt, response
+
+
 def test_approval_server_binds_only_to_127_0_0_1():
     server = ApprovalServer()
     server.start()
@@ -238,6 +275,32 @@ def test_post_with_correct_token_and_cookie_and_csrf_records_decision():
         assert decision is not None
         assert decision.decision == "approve"
         assert decision.approval_scope == "exact"
+    finally:
+        server.stop()
+
+
+def test_post_after_approve_returns_410_gone():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            assert _post_decision(client, url, decision="approve", csrf=csrf).status_code == 200
+            assert _post_decision(client, url, decision="deny", csrf=csrf).status_code == 410
+    finally:
+        server.stop()
+
+
+def test_post_after_deny_returns_410_gone():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            assert _post_decision(client, url, decision="deny", csrf=csrf).status_code == 200
+            assert _post_decision(client, url, decision="approve", csrf=csrf).status_code == 410
     finally:
         server.stop()
 
@@ -353,6 +416,7 @@ def test_headless_policy_pre_approval_matches_exact_payload_for_destructive(tmp_
             "tool": "create_issue",
             "risk_class": "destructive",
             "environment": "mcp_proxy",
+            "resource_hash": classification.resource_hash,
             "max_payload_hash": classification.payload_hash,
             "expires_at": expires,
         }],
@@ -399,9 +463,35 @@ def test_headless_policy_yaml_or_json_schema_validation_rejects_unknown_fields()
         })
 
 
-def test_headless_policy_destructive_requires_payload_hash_unless_explicitly_narrow():
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode checks are not stable on Windows")
+def test_headless_policy_file_rejects_group_readable_permissions(tmp_path):
+    policy_path = tmp_path / "headless-policy.json"
+    policy_path.write_text(
+        json.dumps({"headless_policy_schema_version": 1, "pre_approvals": []}),
+        encoding="utf-8",
+    )
+    policy_path.chmod(0o644)
+
+    with pytest.raises(HeadlessPolicyError, match="owner-only"):
+        HeadlessPolicy.from_file(policy_path)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode checks are not stable on Windows")
+@pytest.mark.parametrize("mode", [0o600, 0o400])
+def test_headless_policy_file_accepts_owner_only_permissions(tmp_path, mode):
+    policy_path = tmp_path / "headless-policy.json"
+    policy_path.write_text(
+        json.dumps({"headless_policy_schema_version": 1, "pre_approvals": []}),
+        encoding="utf-8",
+    )
+    policy_path.chmod(mode)
+
+    assert HeadlessPolicy.from_file(policy_path).pre_approvals == ()
+
+
+def test_headless_policy_destructive_requires_payload_hash_and_resource_selector_unless_explicitly_narrow():
     expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    with pytest.raises(HeadlessPolicyError, match="max_payload_hash"):
+    with pytest.raises(HeadlessPolicyError, match="resource or resource_hash"):
         HeadlessPolicy.from_dict({
             "headless_policy_schema_version": 1,
             "pre_approvals": [{
@@ -411,12 +501,24 @@ def test_headless_policy_destructive_requires_payload_hash_unless_explicitly_nar
                 "expires_at": expires,
             }],
         })
+    with pytest.raises(HeadlessPolicyError, match="max_payload_hash"):
+        HeadlessPolicy.from_dict({
+            "headless_policy_schema_version": 1,
+            "pre_approvals": [{
+                "server": "github",
+                "tool": "delete_repo",
+                "risk_class": "destructive",
+                "resource": "github:acme/private-repo",
+                "expires_at": expires,
+            }],
+        })
     policy = HeadlessPolicy.from_dict({
         "headless_policy_schema_version": 1,
         "pre_approvals": [{
             "server": "github",
             "tool": "delete_repo",
             "risk_class": "destructive",
+            "resource": "github:acme/private-repo",
             "allow_narrow_match": True,
             "expires_at": expires,
         }],
@@ -434,6 +536,22 @@ def test_headless_policy_destructive_requires_payload_hash_unless_explicitly_nar
         arguments={"owner": "acme", "repo": "private-repo"},
     )
     assert policy.match(classification) is not None
+
+
+def test_headless_policy_validates_resource_hash_format():
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with pytest.raises(HeadlessPolicyError, match="resource_hash"):
+        HeadlessPolicy.from_dict({
+            "headless_policy_schema_version": 1,
+            "pre_approvals": [{
+                "server": "github",
+                "tool": "delete_repo",
+                "risk_class": "destructive",
+                "resource_hash": "sha256:not-hex",
+                "max_payload_hash": "sha256:" + "a" * 64,
+                "expires_at": expires,
+            }],
+        })
 
 
 def test_token_hash_in_evidence_not_raw_token(tmp_path):
@@ -691,6 +809,132 @@ def test_scope_expansion_choice_recorded_in_evidence_fields(tmp_path):
         store.close()
 
 
+def test_similar_scope_retry_within_five_minutes_skips_ui_and_links_evidence(tmp_path):
+    config = _config(policy_rule=_write_rule(scope_expansion=True))
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    try:
+        first_outcome, _prompt_seen, response = _request_and_post(
+            manager,
+            server,
+            _classification(config),
+            scope="similar_5m",
+        )
+        assert response.status_code == 200
+        first_record = store.get_pending(first_outcome.request_id)
+        assert first_record.approval_scope == "similar_5m"
+        store.transition(
+            first_outcome.request_id,
+            ApprovalStatus.EXECUTED.value,
+            result_hash="sha256:" + "f" * 64,
+        )
+
+        second_outcome = manager.request_approval(
+            _classification(config),
+            reason="local_approval_required",
+        )
+        second_record = store.get_pending(second_outcome.request_id)
+
+        assert second_outcome.approved
+        assert second_outcome.reason == "scope_cache_hit"
+        assert second_record.status == ApprovalStatus.APPROVED.value
+        assert second_record.approval_scope == "exact"
+        assert second_record.granted_by_request_id == first_outcome.request_id
+        assert second_record.decision_audit_id is None
+        assert store.get_pending(first_outcome.request_id).status == ApprovalStatus.EXECUTED.value
+        assert store.get_pending(first_outcome.request_id).approval_scope == "similar_5m"
+        assert server.pending_prompts() == []
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_similar_scope_expired_or_mismatched_calls_trigger_ui(tmp_path, monkeypatch):
+    config = _config(policy_rule=_write_rule(scope_expansion=True))
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    try:
+        monkeypatch.setattr("agentveil_mcp_proxy.approval.manager.time.time", lambda: 1_700_000_000)
+        first_outcome, _prompt_seen, _response = _request_and_post(
+            manager,
+            server,
+            _classification(config),
+            scope="similar_5m",
+        )
+        assert store.get_pending(first_outcome.request_id).granted_scope_expires_at == 1_700_000_300
+
+        monkeypatch.setattr("agentveil_mcp_proxy.approval.manager.time.time", lambda: 1_700_000_301)
+        worker = threading.Thread(
+            target=lambda: manager.request_approval(
+                _classification(config),
+                reason="local_approval_required",
+            ),
+            daemon=True,
+        )
+        worker.start()
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.pending_prompts(), "expired similar grant must not auto-approve"
+        prompt = server.pending_prompts()[0]
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, server.approval_url(prompt.request_id))
+            _post_decision(client, server.approval_url(prompt.request_id), decision="deny", csrf=csrf)
+        worker.join(timeout=3)
+
+        monkeypatch.setattr("agentveil_mcp_proxy.approval.manager.time.time", lambda: 1_700_000_100)
+        different_tool_call = replace(_classification(config), tool="update_issue")
+        different_tool = threading.Thread(
+            target=lambda: manager.request_approval(
+                different_tool_call,
+                reason="local_approval_required",
+            ),
+            daemon=True,
+        )
+        different_tool.start()
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.pending_prompts(), "different tool must not match similar grant"
+        prompt = server.pending_prompts()[0]
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, server.approval_url(prompt.request_id))
+            _post_decision(client, server.approval_url(prompt.request_id), decision="deny", csrf=csrf)
+        different_tool.join(timeout=3)
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_similar_scope_different_resource_hash_triggers_ui(tmp_path):
+    config = _config(policy_rule=_write_rule(scope_expansion=True))
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    try:
+        _request_and_post(manager, server, _classification(config), scope="similar_5m")
+        different_resource = ToolCallClassifier(config, server_name="github").classify(
+            tool="create_issue",
+            arguments={"owner": "acme", "repo": "other-repo", "title": SECRET},
+        )
+        worker = threading.Thread(
+            target=lambda: manager.request_approval(
+                different_resource,
+                reason="local_approval_required",
+            ),
+            daemon=True,
+        )
+        worker.start()
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.pending_prompts(), "different resource_hash must not match similar grant"
+        prompt = server.pending_prompts()[0]
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, server.approval_url(prompt.request_id))
+            _post_decision(client, server.approval_url(prompt.request_id), decision="deny", csrf=csrf)
+        worker.join(timeout=3)
+    finally:
+        server.stop()
+        store.close()
+
+
 def test_pending_list_shows_correlation_fields_for_multiple_clients():
     server = ApprovalServer()
     server.start()
@@ -894,6 +1138,62 @@ def test_timeout_marks_pending_as_expired_and_returns_sanitized_error(tmp_path):
     finally:
         server.stop()
         store.close()
+
+
+def test_post_after_timeout_returns_410_gone(tmp_path):
+    config = _config(policy_rule=_write_rule(), approval_timeout_seconds=1)
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    result_box: dict[str, Any] = {}
+    worker = threading.Thread(
+        target=lambda: result_box.setdefault(
+            "outcome",
+            manager.request_approval(_classification(config), reason="local_approval_required"),
+        ),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not server.pending_prompts() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        prompt = server.pending_prompts()[0]
+        url = server.approval_url(prompt.request_id)
+        with httpx.Client() as client:
+            csrf = _get_csrf(client, url)
+            worker.join(timeout=3)
+            assert result_box["outcome"].status == ApprovalStatus.EXPIRED.value
+            assert _post_decision(client, url, decision="approve", csrf=csrf).status_code == 410
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_approval_timeout_hang_waits_for_eventual_decision(tmp_path):
+    config = _config(policy_rule=_write_rule(), approval_timeout_seconds=1, on_timeout="hang")
+    manager, store, server, _cli = _manager(tmp_path, config=config)
+    calls = []
+
+    def wait_for_decision(request_id, *, timeout):
+        calls.append(timeout)
+        if len(calls) == 1:
+            return None
+        return ApprovalServerDecision(request_id=request_id, decision="approve", approval_scope="exact")
+
+    server.wait_for_decision = wait_for_decision  # type: ignore[method-assign]
+    try:
+        outcome = manager.request_approval(_classification(config), reason="local_approval_required")
+        record = store.get_pending(outcome.request_id)
+        assert len(calls) == 2
+        assert outcome.approved
+        assert record.status == ApprovalStatus.APPROVED.value
+    finally:
+        server.stop()
+        store.close()
+
+
+def test_approval_timeout_allow_is_rejected_with_migration_message():
+    with pytest.raises(ProxyConfigError, match="approval.on_timeout=allow removed"):
+        _config(policy_rule=_write_rule(), on_timeout="allow")
 
 
 def test_signal_handlers_extend_to_approval_server_graceful_shutdown(tmp_path, monkeypatch):

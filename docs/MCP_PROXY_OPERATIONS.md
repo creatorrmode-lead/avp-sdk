@@ -78,7 +78,8 @@ The export bundle is written with `0600` permissions and includes schema
 version, export time, proxy DID, trusted signer DID set, chain root hash,
 privacy-preserving records, and any signed receipts that can be fetched
 opportunistically. Receipt JCS strings are stored byte-exact so offline
-verification can validate backend signatures.
+verification can validate backend signatures. If receipt fetch fails during
+export, the bundle remains valid and reports the unverified receipt count.
 
 `verify` performs offline checks only: record hashes, chain linkage, signed
 receipt signatures against pinned trusted signer DIDs, and payload-hash binding
@@ -143,8 +144,10 @@ Headless policy files use JSON and are schema-versioned:
 ```
 
 Missing matches deny by default. `destructive`, `production`, and `financial`
-pre-approvals require an exact `max_payload_hash` unless the policy explicitly
-sets `allow_narrow_match: true`.
+pre-approvals require a resource selector (`resource_hash` or `resource`). They
+also require an exact `max_payload_hash` unless the policy explicitly sets
+`allow_narrow_match: true`. Store headless policy files with owner-only
+permissions (`0600` or `0400`) before starting the proxy.
 
 ## Proxy Identity Storage
 
