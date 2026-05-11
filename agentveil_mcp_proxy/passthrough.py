@@ -349,14 +349,16 @@ class McpPassthrough:
         self._stdout_condition = threading.Condition()
         self._notification_writer: Callable[[Mapping[str, Any]], None] | None = None
         self._write_lock = threading.Lock()
+        self._downstream_stdin_lock = threading.Lock()
+        self._counters_lock = threading.Lock()
         self._classifier_errors = 0
         self._runtime_gate: Any | None = None
+        self._runtime_gate_startup_error: Exception | None = None
         self._runtime_gate_errors = 0
         self._downstream_timeouts = 0
         self._security_events: Deque[Mapping[str, Any]] = deque(maxlen=1000)
         self._timed_out_response_ids: set[str] = set()
         self._windows_job: _WindowsJobObject | None = None
-        self._current_approval_outcome: ApprovalOutcome | None = None
 
     @property
     def stderr_bytes_drained(self) -> int:
@@ -428,6 +430,8 @@ class McpPassthrough:
                 except OSError:
                     pass
             raise PassthroughError("downstream startup failed") from exc
+
+        self._initialize_runtime_gate()
 
         self._stderr_thread = threading.Thread(
             target=self._drain_stderr,
@@ -505,6 +509,7 @@ class McpPassthrough:
     def handle_client_line(self, raw_line: str) -> list[dict[str, Any]]:
         """Handle one newline-delimited JSON-RPC client message."""
 
+        approval_outcome: ApprovalOutcome | None = None
         try:
             message = json.loads(raw_line)
         except json.JSONDecodeError:
@@ -520,11 +525,9 @@ class McpPassthrough:
 
         try:
             classification = self._classify_for_local_metadata(message)
-            self._current_approval_outcome = None
-            policy_error = self._policy_error_response(classification, request_id)
+            policy_error, approval_outcome = self._policy_error_response(classification, request_id)
             if policy_error is not None:
                 return [policy_error] if has_id else []
-            approval_outcome = self._current_approval_outcome
             self._send_downstream(message)
             if not has_id:
                 return []
@@ -532,8 +535,8 @@ class McpPassthrough:
             self._record_approval_result(approval_outcome, response)
             return [response]
         except DownstreamTimeoutError:
-            self._downstream_timeouts += 1
-            self._record_approval_error(self._current_approval_outcome, "downstream_response_timeout")
+            self._increment_downstream_timeouts()
+            self._record_approval_error(approval_outcome, "downstream_response_timeout")
             if not has_id:
                 return []
             return [jsonrpc_error(
@@ -543,7 +546,7 @@ class McpPassthrough:
                 data={"status": "timeout", "reason": "downstream_response_timeout"},
             )]
         except PassthroughError:
-            self._record_approval_error(self._current_approval_outcome, "downstream_unavailable")
+            self._record_approval_error(approval_outcome, "downstream_unavailable")
             if not has_id:
                 return []
             return [jsonrpc_error(
@@ -560,34 +563,34 @@ class McpPassthrough:
         except Exception:
             # P4 classification is advisory only. Future evidence slices can
             # consume this counter without logging sensitive request content.
-            self._classifier_errors += 1
+            self._increment_classifier_errors()
             return None
         if classification is not None and self.on_tool_call is not None:
             try:
                 self.on_tool_call(classification)
             except Exception:
-                self._classifier_errors += 1
+                self._increment_classifier_errors()
         return classification
 
     def _policy_error_response(
         self,
         classification: ClassifiedToolCall | None,
         request_id: Any,
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, ApprovalOutcome | None]:
         if classification is None:
-            return None
+            return None, None
         if not isinstance(classification, ClassifiedToolCall):
-            return None
+            return None, None
         evaluation = classification.policy_evaluation
         decision = evaluation.decision
         if decision in {PolicyDecision.ALLOW, PolicyDecision.OBSERVE}:
-            return None
+            return None, None
         if decision is PolicyDecision.BLOCK:
             return _blocked_error(
                 request_id,
                 "blocked by local MCP policy",
                 reason="local_policy_block",
-            )
+            ), None
         if decision is PolicyDecision.APPROVAL:
             return self._approval_flow_response(
                 classification,
@@ -596,23 +599,23 @@ class McpPassthrough:
             )
         if decision is PolicyDecision.ASK_BACKEND:
             if self.runtime_gate_factory is None:
-                return None
+                return None, None
             return self._runtime_gate_error_response(classification, request_id)
         return _blocked_error(
             request_id,
             "blocked by MCP policy",
             reason="unknown_policy_decision",
-        )
+        ), None
 
     def _runtime_gate_error_response(
         self,
         classification: ClassifiedToolCall,
         request_id: Any,
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, ApprovalOutcome | None]:
         try:
             decision = self._runtime_gate_client().evaluate(classification)
         except RuntimeGateUntrustedError:
-            self._runtime_gate_errors += 1
+            self._increment_runtime_gate_errors()
             self._record_runtime_gate_events()
             self._record_security_event({
                 "type": "runtime_decision_untrusted",
@@ -624,19 +627,19 @@ class McpPassthrough:
                 JSONRPC_RUNTIME_GATE_UNTRUSTED,
                 "runtime decision receipt untrusted",
                 data={"status": "blocked", "reason": "untrusted_runtime_decision"},
-            )
+            ), None
         except RuntimeGateUnavailableError:
-            self._runtime_gate_errors += 1
+            self._increment_runtime_gate_errors()
             self._record_runtime_gate_events()
             return self._fallback_error_response(classification, request_id)
         except RuntimeGateError:
-            self._runtime_gate_errors += 1
+            self._increment_runtime_gate_errors()
             self._record_runtime_gate_events()
             return self._fallback_error_response(classification, request_id)
         self._record_runtime_gate_events()
 
         if decision.decision == DECISION_ALLOW:
-            return None
+            return None, None
         if decision.decision == DECISION_WAITING:
             return self._approval_flow_response(
                 classification,
@@ -650,20 +653,20 @@ class McpPassthrough:
                 "blocked by AVP Runtime Gate",
                 reason="runtime_gate_block",
                 decision=decision,
-            )
-        self._runtime_gate_errors += 1
+            ), None
+        self._increment_runtime_gate_errors()
         return jsonrpc_error(
             request_id,
             JSONRPC_RUNTIME_GATE_UNTRUSTED,
             "runtime decision unsupported",
             data={"status": "blocked", "reason": "unsupported_runtime_decision"},
-        )
+        ), None
 
     def _fallback_error_response(
         self,
         classification: ClassifiedToolCall,
         request_id: Any,
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, ApprovalOutcome | None]:
         config = self.config
         fallback = (
             config.fallback.for_risk(classification.risk_class)
@@ -671,7 +674,7 @@ class McpPassthrough:
             else PolicyDecision.BLOCK
         )
         if fallback is PolicyDecision.ALLOW:
-            return None
+            return None, None
         if fallback is PolicyDecision.APPROVAL:
             return self._approval_flow_response(
                 classification,
@@ -684,7 +687,7 @@ class McpPassthrough:
             JSONRPC_RUNTIME_GATE_UNAVAILABLE,
             "AVP Runtime Gate unavailable",
             data={"status": "blocked", "reason": "runtime_gate_unavailable"},
-        )
+        ), None
 
     def _approval_flow_response(
         self,
@@ -694,14 +697,14 @@ class McpPassthrough:
         reason: str,
         message: str = "approval required",
         runtime_decision: RuntimeGateDecision | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, ApprovalOutcome | None]:
         if self.approval_manager is None:
             return _approval_required_error(
                 request_id,
                 reason=reason,
                 message=message,
                 decision=runtime_decision,
-            )
+            ), None
         try:
             outcome = self.approval_manager.request_approval(
                 classification,
@@ -714,22 +717,21 @@ class McpPassthrough:
                 JSONRPC_APPROVAL_REQUIRED,
                 "approval unavailable",
                 data={"status": "blocked", "reason": "approval_evidence_unavailable"},
-            )
+            ), None
         if outcome.approved:
-            self._current_approval_outcome = outcome
-            return None
+            return None, outcome
         if outcome.status == "expired":
             return jsonrpc_error(
                 request_id,
                 JSONRPC_APPROVAL_REQUIRED,
                 "approval timed out",
                 data={"status": "timeout", "reason": outcome.reason},
-            )
+            ), None
         return _blocked_error(
             request_id,
             "blocked by approval decision",
             reason=outcome.reason,
-        )
+        ), None
 
     def _record_approval_result(
         self,
@@ -747,10 +749,19 @@ class McpPassthrough:
 
     def _runtime_gate_client(self) -> Any:
         if self._runtime_gate is None:
-            if self.runtime_gate_factory is None:
-                raise RuntimeGateUnavailableError("runtime gate not configured")
-            self._runtime_gate = self.runtime_gate_factory()
+            if self._runtime_gate_startup_error is not None:
+                raise self._runtime_gate_startup_error
+            raise RuntimeGateUnavailableError("runtime gate not configured")
         return self._runtime_gate
+
+    def _initialize_runtime_gate(self) -> None:
+        if self.runtime_gate_factory is None or self._runtime_gate is not None:
+            return
+        try:
+            self._runtime_gate = self.runtime_gate_factory()
+            self._runtime_gate_startup_error = None
+        except Exception as exc:
+            self._runtime_gate_startup_error = exc
 
     def _record_runtime_gate_events(self) -> None:
         gate = self._runtime_gate
@@ -772,10 +783,23 @@ class McpPassthrough:
             raise PassthroughError("downstream process is not running")
         payload = json.dumps(message, separators=(",", ":"), ensure_ascii=False)
         try:
-            proc.stdin.write(payload + "\n")
-            proc.stdin.flush()
+            with self._downstream_stdin_lock:
+                proc.stdin.write(payload + "\n")
+                proc.stdin.flush()
         except OSError as exc:
             raise PassthroughError("downstream write failed") from exc
+
+    def _increment_classifier_errors(self) -> None:
+        with self._counters_lock:
+            self._classifier_errors += 1
+
+    def _increment_runtime_gate_errors(self) -> None:
+        with self._counters_lock:
+            self._runtime_gate_errors += 1
+
+    def _increment_downstream_timeouts(self) -> None:
+        with self._counters_lock:
+            self._downstream_timeouts += 1
 
     def _wait_downstream_response(self, expected_id: Any) -> dict[str, Any]:
         response_key = self._id_key(expected_id)
