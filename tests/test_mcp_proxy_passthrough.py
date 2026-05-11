@@ -15,11 +15,14 @@ import time
 
 import pytest
 
+import agentveil_mcp_proxy.passthrough as passthrough_module
 import agentveil_mcp_proxy.cli as proxy_cli
 from agentveil_mcp_proxy.cli import ProxyCliError, init_proxy, run_proxy
 from agentveil_mcp_proxy.policy import ProxyConfig
 from agentveil_mcp_proxy.passthrough import (
     JSONRPC_DOWNSTREAM_TIMEOUT,
+    JSONRPC_INVALID_REQUEST,
+    MAX_PENDING_RESPONSES,
     DownstreamConfig,
     McpPassthrough,
 )
@@ -34,6 +37,20 @@ def _json_line(message: dict) -> str:
 
 def _responses(text: str) -> list[dict]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def _padded_json_line(message: dict, target_bytes: int) -> str:
+    message = dict(message)
+    params = dict(message.get("params") or {})
+    params["pad"] = ""
+    message["params"] = params
+    payload = json.dumps(message, separators=(",", ":"))
+    pad_len = target_bytes - len(payload.encode("utf-8"))
+    assert pad_len >= 0
+    params["pad"] = "x" * pad_len
+    payload = json.dumps(message, separators=(",", ":"))
+    assert len(payload.encode("utf-8")) == target_bytes
+    return payload + "\n"
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -921,6 +938,99 @@ def test_oversized_downstream_response_is_rejected_safely(tmp_path):
         passthrough.stop()
 
 
+def test_oversized_client_message_rejected_with_jsonrpc_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(passthrough_module, "MAX_CLIENT_MESSAGE_BYTES", 64)
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_normal_downstream(tmp_path))),
+        name="client-oversized",
+    ))
+    client_out = io.StringIO()
+
+    assert passthrough.run_stdio(io.StringIO("x" * 65 + "\n"), client_out) == 0
+
+    responses = _responses(client_out.getvalue())
+    assert responses == [{
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {
+            "code": JSONRPC_INVALID_REQUEST,
+            "message": "client request exceeds maximum size",
+        },
+    }]
+
+
+def test_oversized_client_message_increments_counter(tmp_path, monkeypatch):
+    monkeypatch.setattr(passthrough_module, "MAX_CLIENT_MESSAGE_BYTES", 64)
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_normal_downstream(tmp_path))),
+        name="client-oversized",
+    ))
+
+    assert passthrough.run_stdio(io.StringIO("x" * 65 + "\n"), io.StringIO()) == 0
+
+    assert passthrough.client_oversized_messages == 1
+
+
+def test_oversized_client_message_does_not_block_subsequent_valid_messages(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(passthrough_module, "MAX_CLIENT_MESSAGE_BYTES", 256)
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_normal_downstream(tmp_path))),
+        name="client-oversized",
+    ))
+    client_out = io.StringIO()
+    valid = _json_line({"jsonrpc": "2.0", "id": 7, "method": "tools/list"})
+
+    assert passthrough.run_stdio(io.StringIO("x" * 257 + "\n" + valid), client_out) == 0
+
+    responses = _responses(client_out.getvalue())
+    assert responses[0]["error"]["code"] == JSONRPC_INVALID_REQUEST
+    assert responses[1]["id"] == 7
+    assert responses[1]["result"]["tools"][0]["name"] == "read_file"
+
+
+def test_partial_line_at_eof_rejected_as_oversized(tmp_path, monkeypatch):
+    monkeypatch.setattr(passthrough_module, "MAX_CLIENT_MESSAGE_BYTES", 256)
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_normal_downstream(tmp_path))),
+        name="client-partial",
+    ))
+    client_out = io.StringIO()
+
+    assert passthrough.run_stdio(
+        io.StringIO('{"jsonrpc":"2.0","id":1,"method":"tools/list"}'),
+        client_out,
+    ) == 0
+
+    assert _responses(client_out.getvalue())[0]["error"]["code"] == JSONRPC_INVALID_REQUEST
+
+
+def test_exact_max_size_message_accepted(tmp_path, monkeypatch):
+    monkeypatch.setattr(passthrough_module, "MAX_CLIENT_MESSAGE_BYTES", 512)
+    passthrough = McpPassthrough(DownstreamConfig(
+        command=sys.executable,
+        args=("-u", str(_normal_downstream(tmp_path))),
+        name="client-exact-max",
+    ))
+    client_out = io.StringIO()
+    line = _padded_json_line(
+        {"jsonrpc": "2.0", "id": "exact", "method": "tools/list", "params": {}},
+        512,
+    )
+
+    assert passthrough.run_stdio(io.StringIO(line), client_out) == 0
+
+    response = _responses(client_out.getvalue())[0]
+    assert response["id"] == "exact"
+    assert response["result"]["tools"][0]["name"] == "read_file"
+
+
 def test_downstream_response_timeout_returns_sanitized_error_and_continues(tmp_path):
     passthrough = McpPassthrough(DownstreamConfig(
         command=sys.executable,
@@ -1038,3 +1148,58 @@ def test_downstream_config_accepts_response_timeout_seconds(tmp_path):
 
     parsed = DownstreamConfig.from_proxy_config(ProxyConfig.from_dict(config))
     assert parsed.response_timeout_seconds == 0.5
+
+
+def test_unsolicited_downstream_response_dropped_and_counted():
+    passthrough = McpPassthrough(DownstreamConfig(command=sys.executable, name="plain"))
+
+    passthrough._handle_downstream_message({"jsonrpc": "2.0", "id": "fabricated", "result": {}})
+
+    assert passthrough.unsolicited_downstream_responses == 1
+    assert passthrough._responses == {}
+
+
+def test_timed_out_response_ids_pruned_after_retention_window():
+    passthrough = McpPassthrough(DownstreamConfig(command=sys.executable, name="plain"))
+    with passthrough._stdout_condition:
+        passthrough._timed_out_response_ids["expired"] = time.monotonic() - 1.0
+        passthrough._prune_timed_out_ids_locked()
+
+    assert passthrough._timed_out_response_ids == {}
+
+
+def test_responses_dict_caps_at_max_pending():
+    passthrough = McpPassthrough(DownstreamConfig(command=sys.executable, name="plain"))
+    with passthrough._stdout_condition:
+        for index in range(MAX_PENDING_RESPONSES + 1):
+            passthrough._responses[f"stale-{index}"] = [{
+                "jsonrpc": "2.0",
+                "id": index,
+                "result": {},
+            }]
+        passthrough._prune_pending_responses_locked()
+
+    assert sum(len(items) for items in passthrough._responses.values()) == MAX_PENDING_RESPONSES
+    assert "stale-0" not in passthrough._responses
+
+
+def test_in_flight_responses_protected_from_cap_drop():
+    passthrough = McpPassthrough(DownstreamConfig(command=sys.executable, name="plain"))
+    protected_key = passthrough._id_key("protected")
+    with passthrough._stdout_condition:
+        passthrough._inflight_ids.add(protected_key)
+        passthrough._responses[protected_key] = [{
+            "jsonrpc": "2.0",
+            "id": "protected",
+            "result": {},
+        }]
+        for index in range(MAX_PENDING_RESPONSES):
+            passthrough._responses[f"stale-{index}"] = [{
+                "jsonrpc": "2.0",
+                "id": index,
+                "result": {},
+            }]
+        passthrough._prune_pending_responses_locked()
+
+    assert protected_key in passthrough._responses
+    assert sum(len(items) for items in passthrough._responses.values()) == MAX_PENDING_RESPONSES

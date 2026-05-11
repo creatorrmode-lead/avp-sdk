@@ -7,9 +7,11 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 
 import pytest
 
+import agentveil_mcp_proxy.cli as proxy_cli
 from agentveil.delegation import verify_delegation
 from agentveil_mcp_proxy.cli import (
     AGENTVEIL_DEV_SIGNER_DIDS,
@@ -95,6 +97,38 @@ def _replace_grant(
     result.control_grant_path.write_text(json.dumps(grant), encoding="utf-8")
     os.chmod(result.control_grant_path, 0o600)
     return grant
+
+
+def test_secure_write_json_fsyncs_before_close(tmp_path, monkeypatch):
+    calls: list[int] = []
+
+    def fake_fsync(fd: int) -> None:
+        os.fstat(fd)
+        calls.append(fd)
+
+    monkeypatch.setattr(proxy_cli.os, "fsync", fake_fsync)
+
+    proxy_cli._secure_write_json(tmp_path / "config.json", {"ok": True})
+
+    assert calls
+
+
+def test_secure_write_json_force_fsyncs_parent_directory_on_posix(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("directory fsync is POSIX-specific")
+    calls: list[bool] = []
+
+    def fake_fsync(fd: int) -> None:
+        calls.append(stat.S_ISDIR(os.fstat(fd).st_mode))
+
+    monkeypatch.setattr(proxy_cli.os, "fsync", fake_fsync)
+    path = tmp_path / "config.json"
+    proxy_cli._secure_write_json(path, {"old": True})
+
+    calls.clear()
+    proxy_cli._secure_write_json(path, {"new": True}, force=True)
+
+    assert calls[-1] is True
 
 
 def test_init_creates_identity_config_and_control_grant_with_0600(tmp_path):

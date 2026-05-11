@@ -21,6 +21,7 @@ from agentveil_mcp_proxy.evidence.store import (
 
 
 EVIDENCE_EXPORT_SCHEMA_VERSION = 1
+_DECISION_RECEIPT_SCHEMAS = frozenset({"decision_receipt/1", "decision_receipt/2"})
 _RECEIPT_RECORD_CROSS_CHECK_FIELDS = (
     ("payload_hash", "payload_hash"),
     ("risk_class", "client_risk_class"),
@@ -219,11 +220,14 @@ def verify_evidence_bundle(
         actual_digest = hashlib.sha256(receipt_jcs.encode("utf-8")).hexdigest()
         if digest != actual_digest:
             raise EvidenceVerificationError("signed receipt digest mismatch")
-        verified_bodies[digest] = _verify_receipt_with_pinned_signers(
+        receipt_body = _verify_receipt_with_pinned_signers(
             receipt_jcs,
             pinned_signers,
         )
+        _verify_decision_receipt_semantics(receipt_body)
+        verified_bodies[digest] = receipt_body
 
+    referenced_receipt_digests: set[str] = set()
     for record in records:
         if not isinstance(record, dict):
             continue
@@ -232,16 +236,23 @@ def verify_evidence_bundle(
             continue
         if receipt_digest not in verified_bodies:
             continue
+        referenced_receipt_digests.add(receipt_digest)
         receipt_body = verified_bodies[receipt_digest]
         for record_field, receipt_field in _RECEIPT_RECORD_CROSS_CHECK_FIELDS:
             record_value = record.get(record_field)
             receipt_value = receipt_body.get(receipt_field)
-            if record_value is None or receipt_value is None:
+            if record_value is None:
                 continue
+            if receipt_value is None:
+                raise EvidenceVerificationError(
+                    f"DecisionReceipt {receipt_field} missing for referenced record"
+                )
             if receipt_value != record_value:
                 raise EvidenceVerificationError(
                     f"DecisionReceipt {receipt_field} mismatch with record {record_field}"
                 )
+    for digest in sorted(set(verified_bodies) - referenced_receipt_digests):
+        warnings.append(f"signed receipt {digest[:16]}... not referenced by any record")
 
     return EvidenceVerificationResult(
         valid=True,
@@ -311,6 +322,13 @@ def _verify_receipt_with_pinned_signers(
         except ProofVerificationError as exc:
             last_error = exc
     raise EvidenceVerificationError("signed receipt signer is not trusted") from last_error
+
+
+def _verify_decision_receipt_semantics(body: Mapping[str, Any]) -> None:
+    if body.get("schema_version") not in _DECISION_RECEIPT_SCHEMAS:
+        raise EvidenceVerificationError("signed receipt schema unsupported")
+    if not isinstance(body.get("audit_id"), str) or not body.get("audit_id"):
+        raise EvidenceVerificationError("signed receipt audit_id missing")
 
 
 def _compute_unverified_receipt_count(

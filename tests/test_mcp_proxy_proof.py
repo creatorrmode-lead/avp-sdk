@@ -94,14 +94,13 @@ def _sign_jcs(body: dict, seed: bytes = BACKEND_SEED) -> str:
     return jcs.canonicalize(signed).decode("utf-8")
 
 
-def _decision_receipt(
+def _decision_receipt_body(
     payload_hash: str = PAYLOAD_HASH,
-    seed: bytes = BACKEND_SEED,
     *,
     risk_class: str = "write",
     policy_context_hash: str = POLICY_CONTEXT_HASH,
-) -> str:
-    return _sign_jcs({
+) -> dict:
+    return {
         "schema_version": "decision_receipt/2",
         "audit_id": "audit-1",
         "agent_did": "did:key:z6Mkagent",
@@ -109,7 +108,24 @@ def _decision_receipt(
         "payload_hash": payload_hash,
         "client_risk_class": risk_class,
         "client_policy_context_hash": policy_context_hash,
-    }, seed=seed)
+    }
+
+
+def _decision_receipt(
+    payload_hash: str = PAYLOAD_HASH,
+    seed: bytes = BACKEND_SEED,
+    *,
+    risk_class: str = "write",
+    policy_context_hash: str = POLICY_CONTEXT_HASH,
+) -> str:
+    return _sign_jcs(
+        _decision_receipt_body(
+            payload_hash,
+            risk_class=risk_class,
+            policy_context_hash=policy_context_hash,
+        ),
+        seed=seed,
+    )
 
 
 def _bundle_with_receipt(
@@ -430,6 +446,95 @@ def test_verify_passes_on_valid_bundle(tmp_path):
     assert result.signed_receipt_count == 1
     assert result.unverified_receipt_count == 0
     assert result.warnings == ()
+
+
+def test_verify_rejects_receipt_with_missing_schema_version(tmp_path):
+    body = _decision_receipt_body()
+    body.pop("schema_version")
+    bundle = _bundle_with_receipt(tmp_path, receipt_jcs=_sign_jcs(body))
+
+    with pytest.raises(EvidenceVerificationError, match="schema unsupported"):
+        verify_evidence_bundle(bundle)
+
+
+def test_verify_rejects_receipt_with_missing_audit_id(tmp_path):
+    body = _decision_receipt_body()
+    body.pop("audit_id")
+    bundle = _bundle_with_receipt(tmp_path, receipt_jcs=_sign_jcs(body))
+
+    with pytest.raises(EvidenceVerificationError, match="audit_id missing"):
+        verify_evidence_bundle(bundle)
+
+
+def test_verify_rejects_receipt_missing_payload_hash_when_referenced(tmp_path):
+    body = _decision_receipt_body()
+    body.pop("payload_hash")
+    bundle = _bundle_with_receipt(tmp_path, receipt_jcs=_sign_jcs(body))
+
+    with pytest.raises(EvidenceVerificationError, match="payload_hash missing"):
+        verify_evidence_bundle(bundle)
+
+
+def test_verify_rejects_receipt_missing_client_risk_class_when_referenced(tmp_path):
+    body = _decision_receipt_body()
+    body.pop("client_risk_class")
+    bundle = _bundle_with_receipt(tmp_path, receipt_jcs=_sign_jcs(body))
+
+    with pytest.raises(EvidenceVerificationError, match="client_risk_class missing"):
+        verify_evidence_bundle(bundle)
+
+
+def test_verify_rejects_receipt_missing_client_policy_context_hash_when_referenced(tmp_path):
+    body = _decision_receipt_body()
+    body.pop("client_policy_context_hash")
+    bundle = _bundle_with_receipt(tmp_path, receipt_jcs=_sign_jcs(body))
+
+    with pytest.raises(EvidenceVerificationError, match="client_policy_context_hash missing"):
+        verify_evidence_bundle(bundle)
+
+
+def test_verify_warns_on_orphan_signed_receipt_not_referenced(tmp_path):
+    receipt_jcs = _decision_receipt()
+    digest = hashlib.sha256(receipt_jcs.encode("utf-8")).hexdigest()
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-no-receipt"))
+        bundle = build_evidence_bundle(
+            store,
+            proxy_identity_did="did:key:z6Mkproxy",
+            trusted_signer_dids=[BACKEND_DID],
+        )
+    bundle["signed_receipts"] = {digest: receipt_jcs}
+
+    result = verify_evidence_bundle(bundle)
+
+    assert result.valid is True
+    assert result.warnings == (f"signed receipt {digest[:16]}... not referenced by any record",)
+
+
+def test_verify_accepts_orphan_signed_receipt_if_warning_consumed_correctly(tmp_path):
+    from agentveil_mcp_proxy.cli import verify_evidence
+    import io
+
+    receipt_jcs = _decision_receipt()
+    digest = hashlib.sha256(receipt_jcs.encode("utf-8")).hexdigest()
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-no-receipt"))
+        bundle = build_evidence_bundle(
+            store,
+            proxy_identity_did="did:key:z6Mkproxy",
+            trusted_signer_dids=[BACKEND_DID],
+        )
+    bundle["signed_receipts"] = {digest: receipt_jcs}
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    out = io.StringIO()
+
+    assert verify_evidence(
+        bundle_path=bundle_path,
+        trusted_signer_dids=[BACKEND_DID],
+        out=out,
+    ) == 0
+    assert f"WARN: signed receipt {digest[:16]}... not referenced by any record" in out.getvalue()
 
 
 def test_export_surfaces_unverified_receipt_count_when_fetch_fails(tmp_path):

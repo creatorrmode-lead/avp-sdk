@@ -60,6 +60,9 @@ JSONRPC_RUNTIME_GATE_UNTRUSTED = -32013
 JSONRPC_DOWNSTREAM_TIMEOUT = -32014
 DEFAULT_DOWNSTREAM_RESPONSE_TIMEOUT_SECONDS = 30.0
 MAX_DOWNSTREAM_MESSAGE_BYTES = 1 * 1024 * 1024
+MAX_CLIENT_MESSAGE_BYTES = 1 * 1024 * 1024
+MAX_PENDING_RESPONSES = 1000
+DEFAULT_TIMED_OUT_ID_RETENTION_SECONDS = 600.0
 SAFE_ENV_KEYS = (
     "PATH",
     "HOME",
@@ -287,6 +290,46 @@ def jsonrpc_error(
     }
 
 
+def _read_bounded_line(client_in: TextIO, max_bytes: int) -> tuple[str | None, bool]:
+    read = getattr(client_in, "read", None)
+    if not callable(read):
+        try:
+            raw_line = next(client_in)  # type: ignore[arg-type]
+        except StopIteration:
+            return None, False
+        raw_bytes = raw_line.encode("utf-8", errors="replace")
+        if not raw_line.endswith("\n") or len(raw_bytes.rstrip(b"\n")) > max_bytes:
+            return "", True
+        return raw_line, False
+
+    chunks: list[str] = []
+    byte_count = 0
+    while True:
+        char = read(1)
+        if char == "":
+            if chunks:
+                return "", True
+            return None, False
+        if char == "\n":
+            return "".join(chunks) + "\n", False
+        char_size = len(char.encode("utf-8", errors="replace"))
+        if byte_count + char_size > max_bytes:
+            _discard_line_remainder(client_in)
+            return "", True
+        chunks.append(char)
+        byte_count += char_size
+
+
+def _discard_line_remainder(client_in: TextIO) -> None:
+    read = getattr(client_in, "read", None)
+    if not callable(read):
+        return
+    while True:
+        char = read(1)
+        if char in {"", "\n"}:
+            return
+
+
 def _blocked_error(
     request_id: Any,
     message: str,
@@ -356,8 +399,11 @@ class McpPassthrough:
         self._runtime_gate_startup_error: Exception | None = None
         self._runtime_gate_errors = 0
         self._downstream_timeouts = 0
+        self._client_oversized_messages = 0
+        self._unsolicited_downstream_responses = 0
         self._security_events: Deque[Mapping[str, Any]] = deque(maxlen=1000)
-        self._timed_out_response_ids: set[str] = set()
+        self._inflight_ids: set[str] = set()
+        self._timed_out_response_ids: dict[str, float] = {}
         self._windows_job: _WindowsJobObject | None = None
 
     @property
@@ -383,6 +429,18 @@ class McpPassthrough:
         """Number of downstream requests that timed out without leaking payload data."""
 
         return self._downstream_timeouts
+
+    @property
+    def client_oversized_messages(self) -> int:
+        """Number of oversized or unterminated client messages rejected."""
+
+        return self._client_oversized_messages
+
+    @property
+    def unsolicited_downstream_responses(self) -> int:
+        """Number of downstream responses dropped for unknown client request IDs."""
+
+        return self._unsolicited_downstream_responses
 
     @property
     def security_events(self) -> tuple[Mapping[str, Any], ...]:
@@ -496,7 +554,21 @@ class McpPassthrough:
         self._notification_writer = lambda message: self._write_client(client_out, message)
         self.start()
         try:
-            for raw_line in client_in:
+            while True:
+                raw_line, rejected = _read_bounded_line(client_in, MAX_CLIENT_MESSAGE_BYTES)
+                if rejected:
+                    self._increment_client_oversized_messages()
+                    self._write_client(
+                        client_out,
+                        jsonrpc_error(
+                            None,
+                            JSONRPC_INVALID_REQUEST,
+                            "client request exceeds maximum size",
+                        ),
+                    )
+                    continue
+                if raw_line is None:
+                    break
                 if not raw_line.strip():
                     continue
                 responses = self.handle_client_line(raw_line)
@@ -528,12 +600,17 @@ class McpPassthrough:
             policy_error, approval_outcome = self._policy_error_response(classification, request_id)
             if policy_error is not None:
                 return [policy_error] if has_id else []
-            self._send_downstream(message)
-            if not has_id:
-                return []
-            response = self._wait_downstream_response(request_id)
-            self._record_approval_result(approval_outcome, response)
-            return [response]
+            response_key = self._register_inflight_id(request_id) if has_id else None
+            try:
+                self._send_downstream(message)
+                if not has_id:
+                    return []
+                response = self._wait_downstream_response(request_id)
+                self._record_approval_result(approval_outcome, response)
+                return [response]
+            finally:
+                if response_key is not None:
+                    self._unregister_inflight_id(response_key)
         except DownstreamTimeoutError:
             self._increment_downstream_timeouts()
             self._record_approval_error(approval_outcome, "downstream_response_timeout")
@@ -801,11 +878,31 @@ class McpPassthrough:
         with self._counters_lock:
             self._downstream_timeouts += 1
 
+    def _increment_client_oversized_messages(self) -> None:
+        with self._counters_lock:
+            self._client_oversized_messages += 1
+
+    def _increment_unsolicited_downstream_responses(self) -> None:
+        with self._counters_lock:
+            self._unsolicited_downstream_responses += 1
+
+    def _register_inflight_id(self, request_id: Any) -> str:
+        response_key = self._id_key(request_id)
+        with self._stdout_condition:
+            self._inflight_ids.add(response_key)
+        return response_key
+
+    def _unregister_inflight_id(self, response_key: str) -> None:
+        with self._stdout_condition:
+            self._inflight_ids.discard(response_key)
+            self._prune_pending_responses_locked()
+
     def _wait_downstream_response(self, expected_id: Any) -> dict[str, Any]:
         response_key = self._id_key(expected_id)
         deadline = time.monotonic() + self.downstream.response_timeout_seconds
         with self._stdout_condition:
             while True:
+                self._prune_timed_out_ids_locked()
                 queued = self._responses.get(response_key)
                 if queued:
                     response = queued.pop(0)
@@ -816,7 +913,9 @@ class McpPassthrough:
                     raise self._downstream_error
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    self._timed_out_response_ids.add(response_key)
+                    self._timed_out_response_ids[
+                        response_key
+                    ] = time.monotonic() + DEFAULT_TIMED_OUT_ID_RETENTION_SECONDS
                     raise DownstreamTimeoutError("downstream response timed out")
                 self._stdout_condition.wait(timeout=remaining)
 
@@ -911,12 +1010,45 @@ class McpPassthrough:
             return
         if "id" in response:
             with self._stdout_condition:
+                self._prune_timed_out_ids_locked()
                 response_key = self._id_key(response.get("id"))
                 if response_key in self._timed_out_response_ids:
-                    self._timed_out_response_ids.remove(response_key)
+                    self._timed_out_response_ids.pop(response_key, None)
+                    return
+                if response_key not in self._inflight_ids:
+                    self._increment_unsolicited_downstream_responses()
                     return
                 self._responses.setdefault(response_key, []).append(response)
+                self._prune_pending_responses_locked()
                 self._stdout_condition.notify_all()
+
+    def _prune_timed_out_ids_locked(self, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        expired = [
+            response_key
+            for response_key, expires_at in self._timed_out_response_ids.items()
+            if expires_at <= now
+        ]
+        for response_key in expired:
+            self._timed_out_response_ids.pop(response_key, None)
+
+    def _prune_pending_responses_locked(self) -> None:
+        pending_count = sum(len(responses) for responses in self._responses.values())
+        while pending_count > MAX_PENDING_RESPONSES:
+            dropped = False
+            for response_key, responses in list(self._responses.items()):
+                if response_key in self._inflight_ids:
+                    continue
+                if responses:
+                    responses.pop(0)
+                    pending_count -= 1
+                    dropped = True
+                if not responses:
+                    self._responses.pop(response_key, None)
+                if pending_count <= MAX_PENDING_RESPONSES:
+                    return
+            if not dropped:
+                return
 
     def _downstream_buffer_too_large(self, buffer: str) -> bool:
         return len(buffer.encode("utf-8", errors="replace")) > MAX_DOWNSTREAM_MESSAGE_BYTES

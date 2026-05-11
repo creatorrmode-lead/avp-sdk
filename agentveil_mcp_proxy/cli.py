@@ -43,6 +43,7 @@ from agentveil_mcp_proxy.evidence import (
     parse_utc_timestamp,
     verify_evidence_bundle_file,
 )
+from agentveil_mcp_proxy.evidence.proof import _fsync_parent_directory
 from agentveil_mcp_proxy.identity import (
     IdentityDecryptError,
     IdentityError,
@@ -203,18 +204,31 @@ def _secure_write_json(path: Path, data: dict[str, Any], *, force: bool = False)
     if force:
         tmp_path = path.with_name(f".{path.name}.tmp")
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        with os.fdopen(os.open(tmp_path, flags, 0o600), "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, sort_keys=True)
-            fh.write("\n")
-        os.replace(tmp_path, path)
-        os.chmod(path, 0o600)
+        try:
+            with os.fdopen(os.open(tmp_path, flags, 0o600), "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, path)
+            os.chmod(path, 0o600)
+            _fsync_parent_directory(path)
+        except Exception:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+            raise
         return
 
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, sort_keys=True)
         fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
     os.chmod(path, 0o600)
+    _fsync_parent_directory(path)
 
 
 def _read_json(path: Path, label: str) -> dict[str, Any]:
