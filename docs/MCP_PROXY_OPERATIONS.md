@@ -194,6 +194,46 @@ also require an exact `max_payload_hash` unless the policy explicitly sets
 `allow_narrow_match: true`. Store headless policy files with owner-only
 permissions (`0600` or `0400`) before starting the proxy.
 
+### Policy Rule Override Semantics
+
+When you author a user policy rule with `intentional_override: true`, the local
+policy engine treats your override as an explicit decision to bypass built-in
+policy pack rules for the contexts that match your rule.
+
+Selection algorithm (`policy.py:_select_rule`):
+
+1. If any matching user rule has `intentional_override: true`:
+   - Built-in rules are ignored for this context.
+   - Among matching user rules, override and non-override, the highest-rank
+     decision wins. Stricter user-authored decisions are not silently bypassed.
+2. Otherwise, the highest-rank matching rule wins across user and built-in
+   rules.
+
+Operational implication:
+
+A single user rule with `intentional_override: true` matching a context where a
+built-in policy pack normally provides protection causes that built-in
+protection to be ignored. This is by design: operators use
+`intentional_override` to relax built-in defaults that conflict with their
+environment. It is still a security boundary footgun. There is no
+"intentional_override only narrows selection to this rule" mode; the override
+applies to the entire matching context.
+
+Example footgun:
+
+If you load the `filesystem` built-in pack, which blocks `delete_*`, `purge_*`,
+`wipe_*`, and similar tools through the `filesystem-delete` rule, and add a user
+rule matching `server: ["filesystem"]` with `intentional_override: true` and
+`decision: "allow"`, then all filesystem destructive actions become allowed
+regardless of the built-in rule's block intent.
+
+Recommended pattern:
+
+Narrow override rules as tightly as possible by tool name pattern, not by server
+alone. Use `match.tool` patterns that name only the specific operation you want
+to permit, such as `tool: ["delete_logs_*"]` for log-rotation tooling, so the
+built-in blanket destructive protection remains in effect for unnamed tools.
+
 ## Proxy Identity Storage
 
 `agentveil-mcp-proxy init` encrypts the local proxy identity by default. In an
@@ -209,6 +249,35 @@ AVP_PROXY_PASSPHRASE='...' agentveil-mcp-proxy init
 storage is available only through the explicit `--plaintext` opt-out on `init`;
 the command prints a warning because the private key is then protected only by
 local file permissions.
+
+### Security Trade-Offs By Passphrase Source
+
+The four passphrase sources do not have equivalent security properties on POSIX
+systems:
+
+- **`--passphrase`** - appears in the process command line, visible via
+  `ps eww` to any user on the same host, and may be written to shell history.
+  Use only for one-off interactive operations, never in scripts or CI.
+
+- **`AVP_PROXY_PASSPHRASE` env var** - visible to other processes running under
+  the same UID via `/proc/<pid>/environ` on Linux, and briefly via `ps eww`
+  during the proxy startup window. It is acceptable for short-lived `init`
+  operations in trusted single-user environments, but it is not recommended for
+  long-running automated setups.
+
+- **`--passphrase-file`** - the most secure automated method. The file contents
+  are not visible in process listings or environment dumps. The MCP proxy
+  enforces owner-only POSIX permissions (`0o600` or `0o400`) on the passphrase
+  file before reading it; mispermissioned files are rejected.
+
+- **TTY prompt** - the most secure interactive method: no command line, no
+  environment, and no file artifact. Use this for first-time `init` on developer
+  workstations.
+
+For CI/CD, container, and systemd-style automated deployments, prefer
+`--passphrase-file` pointing at a mount provided by a secret manager, such as
+`/run/secrets/avp-proxy-passphrase` on Docker Swarm or
+`/var/run/secrets/...` on Kubernetes.
 
 Encrypted identity storage uses an Argon2id key derivation function with
 moderate operation and memory limits. Each CLI invocation that opens the
