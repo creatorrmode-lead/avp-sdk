@@ -23,6 +23,7 @@ from agentveil_mcp_proxy.evidence import (
     ApprovalStatus,
     GENESIS_PREV_EVENT_HASH,
     PendingApproval,
+    record_hash,
 )
 
 
@@ -269,6 +270,97 @@ def test_recover_on_startup_marks_stale_pending_as_expired_does_not_approve(tmp_
     assert stale.status != ApprovalStatus.APPROVED.value
 
 
+def test_recover_on_startup_expires_stale_approved_records_past_grace_period(tmp_path):
+    now = 1_700_010_000
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-stale-approved", created_at=now - 7_300, expires_at=now + 300))
+        store.transition(
+            "req-stale-approved",
+            ApprovalStatus.APPROVED.value,
+            approval_token_hash=APPROVAL_TOKEN_HASH,
+            approval_decided_at=now - 7_200,
+        )
+
+        report = store.recover_on_startup(
+            stale_approval_grace_seconds=3_600,
+            now_timestamp=now,
+        )
+        record = store.get_pending("req-stale-approved")
+
+    assert report.stale_approval_request_ids == ("req-stale-approved",)
+    assert record.status == ApprovalStatus.INVALIDATED.value
+    assert record.error_class == "approval_stale_no_execution"
+
+
+def test_recover_on_startup_leaves_recent_approved_records_unchanged(tmp_path):
+    now = 1_700_010_000
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-recent-approved", created_at=now - 600, expires_at=now + 300))
+        store.transition(
+            "req-recent-approved",
+            ApprovalStatus.APPROVED.value,
+            approval_token_hash=APPROVAL_TOKEN_HASH,
+            approval_decided_at=now - 60,
+        )
+
+        report = store.recover_on_startup(
+            stale_approval_grace_seconds=3_600,
+            now_timestamp=now,
+        )
+        record = store.get_pending("req-recent-approved")
+
+    assert report.stale_approval_request_ids == ()
+    assert record.status == ApprovalStatus.APPROVED.value
+
+
+def test_approved_to_invalidated_transition_allowed(tmp_path):
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-approved-invalidated"))
+        store.transition(
+            "req-approved-invalidated",
+            ApprovalStatus.APPROVED.value,
+            approval_token_hash=APPROVAL_TOKEN_HASH,
+        )
+        updated = store.transition(
+            "req-approved-invalidated",
+            ApprovalStatus.INVALIDATED.value,
+            error_class="approval_stale_no_execution",
+        )
+
+    assert updated.status == ApprovalStatus.INVALIDATED.value
+    assert updated.error_class == "approval_stale_no_execution"
+
+
+def test_expire_stale_approvals_returns_request_ids(tmp_path):
+    now = 1_700_010_000
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-old-approved", created_at=now - 7_300, expires_at=now + 300))
+        store.write_pending(_record("req-new-approved", created_at=now - 600, expires_at=now + 300))
+        store.transition(
+            "req-old-approved",
+            ApprovalStatus.APPROVED.value,
+            approval_token_hash=APPROVAL_TOKEN_HASH,
+            approval_decided_at=now - 7_200,
+        )
+        store.transition(
+            "req-new-approved",
+            ApprovalStatus.APPROVED.value,
+            approval_token_hash=APPROVAL_TOKEN_HASH,
+            approval_decided_at=now - 60,
+        )
+
+        stale = store.expire_stale_approvals(now_timestamp=now, grace_seconds=3_600)
+
+    assert stale == ["req-old-approved"]
+
+
+def test_recovery_report_contains_stale_approval_request_ids(tmp_path):
+    with ApprovalEvidenceStore(tmp_path / "evidence.sqlite") as store:
+        report = store.recover_on_startup(now_timestamp=1_700_010_000)
+
+    assert report.stale_approval_request_ids == ()
+
+
 def test_recover_on_startup_leaves_in_window_pending_unchanged(tmp_path):
     now = int(time.time())
     db_path = tmp_path / "evidence.sqlite"
@@ -283,6 +375,79 @@ def test_recover_on_startup_leaves_in_window_pending_unchanged(tmp_path):
     assert report.pending_before == 1
     assert report.pending_after == 1
     assert record.status == ApprovalStatus.PENDING.value
+
+
+def test_write_pending_does_not_full_chain_rebuild(tmp_path, monkeypatch):
+    with _store(tmp_path) as store:
+        calls = 0
+
+        def spy_rebuild() -> None:
+            nonlocal calls
+            calls += 1
+
+        monkeypatch.setattr(store, "_rebuild_chain_locked", spy_rebuild)
+
+        store.write_pending(_record("req-fast-path", created_at=10))
+
+    assert calls == 0
+
+
+def test_write_pending_chain_invariant_preserved(tmp_path):
+    db_path = tmp_path / "evidence.sqlite"
+    with ApprovalEvidenceStore(db_path) as store:
+        store.write_pending(_record("req-1", created_at=10))
+        store.write_pending(_record("req-2", created_at=20))
+        store.write_pending(_record("req-3", created_at=30))
+
+    with ApprovalEvidenceStore(db_path) as reopened:
+        records = reopened.list_records()
+
+    assert records[0].prev_event_hash == GENESIS_PREV_EVENT_HASH
+    assert records[1].prev_event_hash == record_hash(records[0])
+    assert records[2].prev_event_hash == record_hash(records[1])
+
+
+def test_write_pending_with_clock_skew_falls_back_to_full_rebuild(tmp_path, monkeypatch):
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-later", created_at=20))
+        calls = 0
+        original_rebuild = store._rebuild_chain_locked
+
+        def spy_rebuild() -> None:
+            nonlocal calls
+            calls += 1
+            original_rebuild()
+
+        monkeypatch.setattr(store, "_rebuild_chain_locked", spy_rebuild)
+
+        store.write_pending(_record("req-earlier", created_at=10))
+        records = store.list_records()
+
+    assert calls == 1
+    assert [record.request_id for record in records] == ["req-earlier", "req-later"]
+    assert records[0].prev_event_hash == GENESIS_PREV_EVENT_HASH
+    assert records[1].prev_event_hash == record_hash(records[0])
+
+
+def test_transition_still_triggers_full_rebuild(tmp_path, monkeypatch):
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-transition-rebuild"))
+        calls = 0
+        original_rebuild = store._rebuild_chain_locked
+
+        def spy_rebuild() -> None:
+            nonlocal calls
+            calls += 1
+            original_rebuild()
+
+        monkeypatch.setattr(store, "_rebuild_chain_locked", spy_rebuild)
+        store.transition(
+            "req-transition-rebuild",
+            ApprovalStatus.APPROVED.value,
+            approval_token_hash=APPROVAL_TOKEN_HASH,
+        )
+
+    assert calls == 1
 
 
 def test_evidence_db_file_has_0600_permissions(tmp_path):

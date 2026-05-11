@@ -891,6 +891,7 @@ def verify_evidence(
             "record_count": result.record_count,
             "signed_receipt_count": result.signed_receipt_count,
             "unverified_receipt_count": result.unverified_receipt_count,
+            "warnings": list(result.warnings),
             "chain_root_hash": result.chain_root_hash,
         }, sort_keys=True), file=out)
     else:
@@ -906,6 +907,8 @@ def verify_evidence(
                 "but no matching signed receipt in bundle",
                 file=out,
             )
+        for warning in result.warnings:
+            print(f"WARN: {warning}", file=out)
     return 0
 
 

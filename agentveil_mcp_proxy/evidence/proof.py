@@ -44,6 +44,7 @@ class EvidenceVerificationResult:
     signed_receipt_count: int
     chain_root_hash: str
     unverified_receipt_count: int = 0
+    warnings: tuple[str, ...] = ()
 
 
 def utc_now_iso() -> str:
@@ -189,6 +190,14 @@ def verify_evidence_bundle(
         or unverified_receipt_count < 0
     ):
         raise EvidenceVerificationError("unverified_receipt_count must be a non-negative integer")
+    computed_unverified_receipt_count = _compute_unverified_receipt_count(records, receipts)
+    warnings: list[str] = []
+    if computed_unverified_receipt_count != unverified_receipt_count:
+        warnings.append(
+            "unverified_receipt_count mismatch: "
+            f"bundle claims {unverified_receipt_count}, "
+            f"computed {computed_unverified_receipt_count}"
+        )
     pinned_signers = tuple(trusted_signer_dids or bundle.get("trusted_signer_dids") or ())
     if receipts and not pinned_signers:
         raise EvidenceVerificationError("trusted signer DID(s) are required")
@@ -223,7 +232,8 @@ def verify_evidence_bundle(
         record_count=len(records),
         signed_receipt_count=len(receipts),
         chain_root_hash=str(bundle.get("chain_root_hash")),
-        unverified_receipt_count=unverified_receipt_count,
+        unverified_receipt_count=computed_unverified_receipt_count,
+        warnings=tuple(warnings),
     )
 
 
@@ -269,6 +279,24 @@ def _verify_receipt_with_pinned_signers(
     raise EvidenceVerificationError("signed receipt signer is not trusted") from last_error
 
 
+def _compute_unverified_receipt_count(
+    records: Iterable[Mapping[str, Any]],
+    receipts: Mapping[str, Any],
+) -> int:
+    count = 0
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        if record.get("decision_audit_id") is None:
+            continue
+        receipt_digest = record.get("decision_receipt_sha256")
+        if receipt_digest is None:
+            continue
+        if not isinstance(receipt_digest, str) or receipt_digest not in receipts:
+            count += 1
+    return count
+
+
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -278,15 +306,31 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, sort_keys=True)
             fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
         os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, path)
         os.chmod(path, 0o600)
+        _fsync_parent_directory(path)
     except Exception:
         try:
             tmp_path.unlink()
         except OSError:
             pass
         raise
+
+
+def _fsync_parent_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(str(path.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _record_label(record: Mapping[str, Any], index: int) -> str:

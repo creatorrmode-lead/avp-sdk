@@ -346,6 +346,30 @@ def test_export_atomic_write_does_not_leave_partial_bundle_on_failure(tmp_path, 
     assert not list(tmp_path.glob(".bundle.json.*.tmp"))
 
 
+def test_atomic_write_json_calls_fsync(tmp_path, monkeypatch):
+    import agentveil_mcp_proxy.evidence.proof as proof_module
+
+    calls: list[int] = []
+    monkeypatch.setattr(proof_module.os, "fsync", lambda fd: calls.append(fd))
+
+    proof_module._atomic_write_json(tmp_path / "bundle.json", {"ok": True})
+
+    assert calls
+
+
+def test_atomic_write_json_calls_directory_fsync_on_posix(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("directory fsync is POSIX-specific")
+    import agentveil_mcp_proxy.evidence.proof as proof_module
+
+    calls: list[int] = []
+    monkeypatch.setattr(proof_module.os, "fsync", lambda fd: calls.append(fd))
+
+    proof_module._atomic_write_json(tmp_path / "bundle.json", {"ok": True})
+
+    assert len(calls) >= 2
+
+
 def test_verify_passes_on_valid_bundle(tmp_path):
     bundle = _bundle_with_receipt(tmp_path)
 
@@ -355,6 +379,7 @@ def test_verify_passes_on_valid_bundle(tmp_path):
     assert result.record_count == 1
     assert result.signed_receipt_count == 1
     assert result.unverified_receipt_count == 0
+    assert result.warnings == ()
 
 
 def test_export_surfaces_unverified_receipt_count_when_fetch_fails(tmp_path):
@@ -378,6 +403,72 @@ def test_export_surfaces_unverified_receipt_count_when_fetch_fails(tmp_path):
     result = verify_evidence_bundle(bundle)
     assert result.valid is True
     assert result.unverified_receipt_count == 1
+    assert result.warnings == ()
+
+
+def _bundle_with_unverified_records(tmp_path: Path, *, count: int) -> dict:
+    with _store(tmp_path) as store:
+        for index in range(count):
+            store.write_pending(_record(
+                f"req-unverified-{index}",
+                created_at=10 + index,
+                decision_audit_id=f"audit-{index}",
+                decision_receipt_sha256=f"{index:064x}",
+            ))
+        return build_evidence_bundle(
+            store,
+            proxy_identity_did="did:key:z6Mkproxy",
+            trusted_signer_dids=[BACKEND_DID],
+        )
+
+
+def test_verify_bundle_warns_on_inflated_unverified_count(tmp_path):
+    bundle = _bundle_with_unverified_records(tmp_path, count=2)
+    bundle["unverified_receipt_count"] = 5
+
+    result = verify_evidence_bundle(bundle)
+
+    assert result.unverified_receipt_count == 2
+    assert result.warnings == (
+        "unverified_receipt_count mismatch: bundle claims 5, computed 2",
+    )
+
+
+def test_verify_bundle_warns_on_deflated_unverified_count(tmp_path):
+    bundle = _bundle_with_unverified_records(tmp_path, count=3)
+    bundle["unverified_receipt_count"] = 0
+
+    result = verify_evidence_bundle(bundle)
+
+    assert result.unverified_receipt_count == 3
+    assert result.warnings == (
+        "unverified_receipt_count mismatch: bundle claims 0, computed 3",
+    )
+
+
+def test_verify_bundle_no_warning_on_matching_count(tmp_path):
+    bundle = _bundle_with_unverified_records(tmp_path, count=2)
+
+    result = verify_evidence_bundle(bundle)
+
+    assert result.unverified_receipt_count == 2
+    assert result.warnings == ()
+
+
+def test_verify_bundle_records_without_decision_audit_id_not_counted(tmp_path):
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-no-audit", decision_receipt_sha256="0" * 64))
+        bundle = build_evidence_bundle(
+            store,
+            proxy_identity_did="did:key:z6Mkproxy",
+            trusted_signer_dids=[BACKEND_DID],
+        )
+    bundle["unverified_receipt_count"] = 0
+
+    result = verify_evidence_bundle(bundle)
+
+    assert result.unverified_receipt_count == 0
+    assert result.warnings == ()
 
 
 def test_verify_fails_on_record_hash_mismatch(tmp_path):
@@ -477,12 +568,48 @@ def test_verify_human_and_json_output_formats(tmp_path):
     payload = json.loads(structured.getvalue())
     assert payload["status"] == "ok"
     assert payload["unverified_receipt_count"] == 0
+    assert payload["warnings"] == []
 
     bundle["unverified_receipt_count"] = 1
     bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
     warn = io.StringIO()
     assert verify_evidence(bundle_path=bundle_path, out=warn) == 0
-    assert "WARN: 1 records have decision_audit_id" in warn.getvalue()
+    assert "WARN: unverified_receipt_count mismatch: bundle claims 1, computed 0" in warn.getvalue()
+
+
+def test_verify_cli_surfaces_unverified_count_mismatch_warning_human(tmp_path):
+    from agentveil_mcp_proxy.cli import verify_evidence
+    import io
+
+    bundle = _bundle_with_unverified_records(tmp_path, count=1)
+    bundle["unverified_receipt_count"] = 0
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    out = io.StringIO()
+    assert verify_evidence(bundle_path=bundle_path, out=out) == 0
+
+    assert "WARN: 1 records have decision_audit_id" in out.getvalue()
+    assert "WARN: unverified_receipt_count mismatch: bundle claims 0, computed 1" in out.getvalue()
+
+
+def test_verify_cli_surfaces_unverified_count_mismatch_warning_json(tmp_path):
+    from agentveil_mcp_proxy.cli import verify_evidence
+    import io
+
+    bundle = _bundle_with_unverified_records(tmp_path, count=1)
+    bundle["unverified_receipt_count"] = 0
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    out = io.StringIO()
+    assert verify_evidence(bundle_path=bundle_path, output_format="json", out=out) == 0
+    payload = json.loads(out.getvalue())
+
+    assert payload["unverified_receipt_count"] == 1
+    assert payload["warnings"] == [
+        "unverified_receipt_count mismatch: bundle claims 0, computed 1"
+    ]
 
 
 def test_verify_does_not_leak_payload_data_in_error_messages(tmp_path):

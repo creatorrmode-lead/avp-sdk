@@ -12,7 +12,7 @@ arguments, prompts, outputs, tokens, source code, or private logs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from enum import Enum
 import hashlib
 import os
@@ -89,6 +89,7 @@ _ALLOWED_TRANSITIONS = {
         ApprovalStatus.EXECUTED.value,
         ApprovalStatus.BLOCKED.value,
         ApprovalStatus.ERROR.value,
+        ApprovalStatus.INVALIDATED.value,
     },
 }
 
@@ -136,6 +137,7 @@ class RecoveryReport:
     pending_before: int
     pending_after: int
     expired_request_ids: tuple[str, ...]
+    stale_approval_request_ids: tuple[str, ...] = ()
 
 
 _COLUMNS = tuple(field.name for field in fields(PendingApproval))
@@ -215,7 +217,6 @@ class ApprovalEvidenceStore:
         """Atomically persist a pending approval before any UI render."""
 
         self._validate_pending_record(record)
-        values = _record_values(record)
         with self._lock:
             self._begin()
             try:
@@ -232,12 +233,16 @@ class ApprovalEvidenceStore:
                     raise ApprovalEvidenceDuplicateError(
                         f"pending approval already exists: {record.request_id}"
                     )
+                prev_event_hash, append_only = self._compute_chain_link_for_insert_locked(record)
+                record = replace(record, prev_event_hash=prev_event_hash)
+                values = _record_values(record)
                 placeholders = ", ".join("?" for _ in _COLUMNS)
                 self._conn.execute(
                     f"INSERT INTO pending_approvals ({', '.join(_COLUMNS)}) VALUES ({placeholders})",
                     values,
                 )
-                self._rebuild_chain_locked()
+                if not append_only:
+                    self._rebuild_chain_locked()
                 self._conn.commit()
                 self._secure_auxiliary_files()
             except Exception:
@@ -356,17 +361,56 @@ class ApprovalEvidenceStore:
                 raise
         return request_ids
 
-    def recover_on_startup(self) -> RecoveryReport:
+    def expire_stale_approvals(
+        self,
+        *,
+        now_timestamp: int | None = None,
+        grace_seconds: int = 3600,
+    ) -> list[str]:
+        """Invalidate approved records that never reached an execution result."""
+
+        if grace_seconds < 0:
+            raise ValueError("grace_seconds must be non-negative")
+        now = int(time.time()) if now_timestamp is None else int(now_timestamp)
+        cutoff = now - int(grace_seconds)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT request_id FROM pending_approvals "
+                "WHERE status = ? AND approval_decided_at IS NOT NULL "
+                "AND approval_decided_at <= ? ORDER BY created_at, request_id",
+                (ApprovalStatus.APPROVED.value, cutoff),
+            ).fetchall()
+            request_ids = [str(row["request_id"]) for row in rows]
+        for request_id in request_ids:
+            self.transition(
+                request_id,
+                ApprovalStatus.INVALIDATED.value,
+                error_class="approval_stale_no_execution",
+            )
+        return request_ids
+
+    def recover_on_startup(
+        self,
+        *,
+        stale_approval_grace_seconds: int = 3600,
+        now_timestamp: int | None = None,
+    ) -> RecoveryReport:
         """Recover local approval state without approving anything."""
 
         pending_before = self._count_status(ApprovalStatus.PENDING.value)
-        expired = tuple(self.expire_overdue())
+        now = int(time.time()) if now_timestamp is None else int(now_timestamp)
+        expired = tuple(self.expire_overdue(now_timestamp=now))
+        stale_approvals = tuple(self.expire_stale_approvals(
+            now_timestamp=now,
+            grace_seconds=stale_approval_grace_seconds,
+        ))
         pending_after = self._count_status(ApprovalStatus.PENDING.value)
         return RecoveryReport(
             total_records=self._count_records(),
             pending_before=pending_before,
             pending_after=pending_after,
             expired_request_ids=expired,
+            stale_approval_request_ids=stale_approvals,
         )
 
     def list_records(
@@ -557,6 +601,21 @@ class ApprovalEvidenceStore:
             )
             return
         raise ApprovalEvidenceSchemaError(f"evidence schema version {version} is unsupported")
+
+    def _compute_chain_link_for_insert_locked(self, record: PendingApproval) -> tuple[str, bool]:
+        row = self._conn.execute(
+            f"SELECT {', '.join(_COLUMNS)} FROM pending_approvals "
+            "ORDER BY created_at DESC, request_id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return GENESIS_PREV_EVENT_HASH, True
+        last_record = _row_to_record(row)
+        if (record.created_at, record.request_id) > (
+            last_record.created_at,
+            last_record.request_id,
+        ):
+            return record_hash(last_record), True
+        return GENESIS_PREV_EVENT_HASH, False
 
     def _rebuild_chain_locked(self) -> None:
         rows = self._conn.execute(
