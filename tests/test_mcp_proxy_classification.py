@@ -214,6 +214,21 @@ def test_risk_inference_covers_core_vocab():
     assert infer_risk_class("custom.inspect", tool="custom_action") is RiskClass.UNKNOWN
 
 
+def test_risk_inference_destructive_wins_over_financial_compounds():
+    assert infer_risk_class("billing.delete_payment", tool="delete_payment") is RiskClass.DESTRUCTIVE
+    assert infer_risk_class("billing.drop_billing_table", tool="drop_billing_table") is RiskClass.DESTRUCTIVE
+    assert infer_risk_class("auth.revoke_payment_token", tool="revoke_payment_token") is RiskClass.DESTRUCTIVE
+    assert (
+        infer_risk_class("bank.transfer_to_destroy_account", tool="transfer_to_destroy_account")
+        is RiskClass.DESTRUCTIVE
+    )
+
+
+def test_risk_inference_destructive_wins_over_production_compounds():
+    assert infer_risk_class("deploy.drop_prod_db", tool="drop_prod_db") is RiskClass.DESTRUCTIVE
+    assert infer_risk_class("auth.revoke_prod_access", tool="revoke_prod_access") is RiskClass.DESTRUCTIVE
+
+
 def test_risk_inference_does_not_over_classify_substring_collisions():
     assert infer_risk_class("github.get_infrastructure", tool="get_infrastructure") is RiskClass.READ
     assert infer_risk_class("github.list_endpoints", tool="list_endpoints") is RiskClass.READ

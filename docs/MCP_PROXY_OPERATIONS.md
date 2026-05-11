@@ -82,9 +82,23 @@ verification can validate backend signatures. If receipt fetch fails during
 export, the bundle remains valid and reports the unverified receipt count.
 
 `verify` performs offline checks only: record hashes, chain linkage, signed
-receipt signatures against pinned trusted signer DIDs, and payload-hash binding
-between records and DecisionReceipts when those receipts are present. It does
-not call the AVP backend.
+receipt signatures against pinned trusted signer DIDs, and signed-field binding
+between records and DecisionReceipts when those receipts are present. It checks
+payload hash, client risk class, and client policy context hash. It does not
+call the AVP backend.
+
+Auditors should pass their own pinned signer DID set:
+
+```bash
+agentveil-mcp-proxy verify /secure/path/evidence-bundle.json \
+  --trusted-signer-did did:key:z6Mk...
+```
+
+Without `--trusted-signer-did`, verification falls back to the signer list
+embedded in the bundle and prints a warning. That mode confirms internal bundle
+consistency, but it does not prove the bundle's signer list is the auditor's
+trusted set. A malicious bundle can include an attacker-controlled signer DID
+and a matching attacker-signed receipt.
 
 To prune old terminal records and rebuild the local chain:
 

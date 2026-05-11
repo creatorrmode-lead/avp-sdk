@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import hashlib
 import json
 import os
@@ -20,6 +20,7 @@ from agentveil_mcp_proxy.evidence import (
     ApprovalEvidenceSchemaError,
     ApprovalEvidenceStore,
     ApprovalStatus,
+    EvidenceExportError,
     EvidenceVerificationError,
     PendingApproval,
     build_evidence_bundle,
@@ -27,7 +28,7 @@ from agentveil_mcp_proxy.evidence import (
     record_hash,
     verify_evidence_bundle,
 )
-from agentveil_mcp_proxy.evidence.proof import verify_evidence_bundle_file
+from agentveil_mcp_proxy.evidence.proof import _bundle_records, verify_evidence_bundle_file
 
 
 PAYLOAD_HASH = "sha256:" + "a" * 64
@@ -93,15 +94,21 @@ def _sign_jcs(body: dict, seed: bytes = BACKEND_SEED) -> str:
     return jcs.canonicalize(signed).decode("utf-8")
 
 
-def _decision_receipt(payload_hash: str = PAYLOAD_HASH, seed: bytes = BACKEND_SEED) -> str:
+def _decision_receipt(
+    payload_hash: str = PAYLOAD_HASH,
+    seed: bytes = BACKEND_SEED,
+    *,
+    risk_class: str = "write",
+    policy_context_hash: str = POLICY_CONTEXT_HASH,
+) -> str:
     return _sign_jcs({
         "schema_version": "decision_receipt/2",
         "audit_id": "audit-1",
         "agent_did": "did:key:z6Mkagent",
         "decision": "WAITING_FOR_HUMAN_APPROVAL",
         "payload_hash": payload_hash,
-        "client_risk_class": "write",
-        "client_policy_context_hash": POLICY_CONTEXT_HASH,
+        "client_risk_class": risk_class,
+        "client_policy_context_hash": policy_context_hash,
     }, seed=seed)
 
 
@@ -257,6 +264,49 @@ def test_export_evidence_creates_bundle_with_correct_schema_and_chain_root(tmp_p
     assert len(bundle["records"]) == 2
     assert bundle["chain_root_hash"] == bundle["records"][-1]["record_hash"]
     assert verify_evidence_bundle(bundle).valid is True
+
+
+def test_bundle_records_uses_stored_prev_event_hash():
+    first = replace(_record("req-1", created_at=10), prev_event_hash=GENESIS_PREV_EVENT_HASH)
+    second_prev = record_hash(first)
+    second = replace(_record("req-2", created_at=20), prev_event_hash=second_prev)
+
+    records = _bundle_records([first, second])
+
+    assert records[0]["prev_event_hash"] == GENESIS_PREV_EVENT_HASH
+    assert records[1]["prev_event_hash"] == second_prev
+
+
+def test_bundle_export_raises_on_broken_chain():
+    broken = replace(_record("req-broken"), prev_event_hash="sha256:" + "0" * 64)
+
+    with pytest.raises(EvidenceExportError, match="chain integrity broken at request_id req-broken"):
+        _bundle_records([broken])
+
+
+def test_export_evidence_cli_surfaces_chain_break_error(tmp_path, capsys):
+    from agentveil_mcp_proxy.cli import init_proxy, main, proxy_paths
+
+    home = tmp_path / "avp-home"
+    init_proxy(home=home, agent_name="proxy", plaintext=True)
+    db_path = proxy_paths(home).proxy_dir / "evidence.sqlite"
+    with ApprovalEvidenceStore(db_path) as store:
+        store.write_pending(_record("req-1", created_at=10))
+        store.write_pending(_record("req-2", created_at=20))
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "UPDATE pending_approvals SET prev_event_hash = ? WHERE request_id = ?",
+            ("sha256:" + "0" * 64, "req-2"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert main(["export-evidence", "--home", str(home), str(tmp_path / "bundle.json")]) == 1
+    rendered = capsys.readouterr()
+    assert "ERROR: evidence hash chain mismatch at request_id req-2" in rendered.err
 
 
 def test_export_filter_since_until_request_id_works(tmp_path):
@@ -521,6 +571,37 @@ def test_verify_fails_on_scope_mismatch_between_record_and_decision_receipt(tmp_
         verify_evidence_bundle(bundle)
 
 
+def test_verify_bundle_rejects_risk_class_mismatch(tmp_path):
+    receipt_jcs = _decision_receipt(risk_class="destructive")
+    bundle = _bundle_with_receipt(tmp_path, receipt_jcs=receipt_jcs)
+
+    with pytest.raises(EvidenceVerificationError, match="client_risk_class"):
+        verify_evidence_bundle(bundle)
+
+
+def test_verify_bundle_rejects_policy_context_hash_mismatch(tmp_path):
+    receipt_jcs = _decision_receipt(policy_context_hash="f" * 64)
+    bundle = _bundle_with_receipt(tmp_path, receipt_jcs=receipt_jcs)
+
+    with pytest.raises(EvidenceVerificationError, match="client_policy_context_hash"):
+        verify_evidence_bundle(bundle)
+
+
+def test_verify_bundle_accepts_matching_expanded_fields(tmp_path):
+    bundle = _bundle_with_receipt(tmp_path)
+
+    assert verify_evidence_bundle(bundle).valid is True
+
+
+def test_verify_bundle_skips_expanded_cross_check_when_record_field_missing(tmp_path):
+    bundle = _bundle_with_receipt(tmp_path)
+    bundle["records"][0]["risk_class"] = None
+    bundle["records"][0]["record_hash"] = record_hash(bundle["records"][0])
+    bundle["chain_root_hash"] = bundle["records"][0]["record_hash"]
+
+    assert verify_evidence_bundle(bundle).valid is True
+
+
 def test_verify_uses_only_pinned_trusted_signer_dids(tmp_path):
     receipt_jcs = _decision_receipt(seed=OTHER_BACKEND_SEED)
     bundle = _bundle_with_receipt(
@@ -564,7 +645,12 @@ def test_verify_human_and_json_output_formats(tmp_path):
     assert "OK: bundle integrity verified" in human.getvalue()
 
     structured = io.StringIO()
-    assert verify_evidence(bundle_path=bundle_path, output_format="json", out=structured) == 0
+    assert verify_evidence(
+        bundle_path=bundle_path,
+        output_format="json",
+        trusted_signer_dids=[BACKEND_DID],
+        out=structured,
+    ) == 0
     payload = json.loads(structured.getvalue())
     assert payload["status"] == "ok"
     assert payload["unverified_receipt_count"] == 0
@@ -575,6 +661,50 @@ def test_verify_human_and_json_output_formats(tmp_path):
     warn = io.StringIO()
     assert verify_evidence(bundle_path=bundle_path, out=warn) == 0
     assert "WARN: unverified_receipt_count mismatch: bundle claims 1, computed 0" in warn.getvalue()
+
+
+def test_verify_cli_emits_warning_when_trusted_signer_did_absent_human(tmp_path):
+    from agentveil_mcp_proxy.cli import verify_evidence
+    import io
+
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(_bundle_with_receipt(tmp_path)), encoding="utf-8")
+
+    out = io.StringIO()
+    assert verify_evidence(bundle_path=bundle_path, out=out) == 0
+
+    assert "WARN: default_trust_from_bundle:" in out.getvalue()
+
+
+def test_verify_cli_emits_warning_when_trusted_signer_did_absent_json(tmp_path):
+    from agentveil_mcp_proxy.cli import verify_evidence
+    import io
+
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(_bundle_with_receipt(tmp_path)), encoding="utf-8")
+
+    out = io.StringIO()
+    assert verify_evidence(bundle_path=bundle_path, output_format="json", out=out) == 0
+    payload = json.loads(out.getvalue())
+
+    assert any(warning.startswith("default_trust_from_bundle:") for warning in payload["warnings"])
+
+
+def test_verify_cli_no_warning_when_explicit_trusted_signer_did_provided(tmp_path):
+    from agentveil_mcp_proxy.cli import verify_evidence
+    import io
+
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(_bundle_with_receipt(tmp_path)), encoding="utf-8")
+
+    out = io.StringIO()
+    assert verify_evidence(
+        bundle_path=bundle_path,
+        trusted_signer_dids=[BACKEND_DID],
+        out=out,
+    ) == 0
+
+    assert "default_trust_from_bundle" not in out.getvalue()
 
 
 def test_verify_cli_surfaces_unverified_count_mismatch_warning_human(tmp_path):
@@ -603,7 +733,12 @@ def test_verify_cli_surfaces_unverified_count_mismatch_warning_json(tmp_path):
     bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
 
     out = io.StringIO()
-    assert verify_evidence(bundle_path=bundle_path, output_format="json", out=out) == 0
+    assert verify_evidence(
+        bundle_path=bundle_path,
+        output_format="json",
+        trusted_signer_dids=[BACKEND_DID],
+        out=out,
+    ) == 0
     payload = json.loads(out.getvalue())
 
     assert payload["unverified_receipt_count"] == 1

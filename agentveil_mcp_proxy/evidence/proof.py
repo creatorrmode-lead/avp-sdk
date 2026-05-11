@@ -21,6 +21,11 @@ from agentveil_mcp_proxy.evidence.store import (
 
 
 EVIDENCE_EXPORT_SCHEMA_VERSION = 1
+_RECEIPT_RECORD_CROSS_CHECK_FIELDS = (
+    ("payload_hash", "payload_hash"),
+    ("risk_class", "client_risk_class"),
+    ("policy_context_hash", "client_policy_context_hash"),
+)
 
 
 class EvidenceProofError(RuntimeError):
@@ -82,7 +87,8 @@ def build_evidence_bundle(
         request_ids=request_ids,
     )
     signed_receipts: dict[str, str] = {}
-    export_records = _bundle_records(records)
+    has_filter = since_timestamp is not None or until_timestamp is not None or request_ids is not None
+    export_records = _bundle_records(records, require_genesis=not has_filter)
     unverified_receipt_count = 0
     for record in records:
         if not record.decision_audit_id or not record.decision_receipt_sha256:
@@ -164,7 +170,12 @@ def verify_evidence_bundle(
     records = bundle.get("records")
     if not isinstance(records, list):
         raise EvidenceVerificationError("records must be a list")
-    expected_prev = GENESIS_PREV_EVENT_HASH
+    has_filter = _bundle_uses_filter(bundle.get("filter"))
+    expected_prev = (
+        records[0].get("prev_event_hash")
+        if records and has_filter and isinstance(records[0], dict)
+        else GENESIS_PREV_EVENT_HASH
+    )
     last_hash = GENESIS_PREV_EVENT_HASH
     for index, record in enumerate(records):
         if not isinstance(record, dict):
@@ -222,10 +233,15 @@ def verify_evidence_bundle(
         if receipt_digest not in verified_bodies:
             continue
         receipt_body = verified_bodies[receipt_digest]
-        expected_payload = record.get("payload_hash")
-        receipt_payload = receipt_body.get("payload_hash")
-        if receipt_payload is not None and receipt_payload != expected_payload:
-            raise EvidenceVerificationError("DecisionReceipt payload_hash mismatch")
+        for record_field, receipt_field in _RECEIPT_RECORD_CROSS_CHECK_FIELDS:
+            record_value = record.get(record_field)
+            receipt_value = receipt_body.get(receipt_field)
+            if record_value is None or receipt_value is None:
+                continue
+            if receipt_value != record_value:
+                raise EvidenceVerificationError(
+                    f"DecisionReceipt {receipt_field} mismatch with record {record_field}"
+                )
 
     return EvidenceVerificationResult(
         valid=True,
@@ -254,16 +270,34 @@ def verify_evidence_bundle_file(
     return verify_evidence_bundle(bundle, trusted_signer_dids=trusted_signer_dids)
 
 
-def _bundle_records(records: list[PendingApproval]) -> list[dict[str, Any]]:
+def _bundle_records(records: list[PendingApproval], *, require_genesis: bool = True) -> list[dict[str, Any]]:
     export_records: list[dict[str, Any]] = []
-    prev_hash = GENESIS_PREV_EVENT_HASH
+    expected_prev_hash = (
+        GENESIS_PREV_EVENT_HASH
+        if require_genesis or not records
+        else records[0].prev_event_hash
+    )
     for record in records:
+        if record.prev_event_hash != expected_prev_hash:
+            raise EvidenceExportError(
+                f"chain integrity broken at request_id {record.request_id}: "
+                "stored prev_event_hash diverges from expected chain link; "
+                "run doctor or inspect evidence DB integrity"
+            )
         data = asdict(record)
-        data["prev_event_hash"] = prev_hash
         data["record_hash"] = record_hash(data)
-        prev_hash = data["record_hash"]
+        expected_prev_hash = data["record_hash"]
         export_records.append(data)
     return export_records
+
+
+def _bundle_uses_filter(filter_value: Any) -> bool:
+    if not isinstance(filter_value, Mapping):
+        return False
+    return any(
+        filter_value.get(key) is not None
+        for key in ("since_timestamp", "until_timestamp", "request_ids")
+    )
 
 
 def _verify_receipt_with_pinned_signers(

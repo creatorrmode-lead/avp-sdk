@@ -214,12 +214,13 @@ def infer_risk_class(
             text_parts.append(environment)
     text = " ".join(text_parts).lower()
     tokens = tuple(item for item in re.split(r"[^a-z0-9]+", text) if item)
+    # Keep compound-keyword inference aligned with policy._RISK_RANK.
+    if _has_prefix(tokens, _DESTRUCTIVE_PREFIXES):
+        return RiskClass.DESTRUCTIVE
     if _has_prefix(tokens, _FINANCIAL_WORDS):
         return RiskClass.FINANCIAL
     if _has_prefix(tokens, _PRODUCTION_WORDS):
         return RiskClass.PRODUCTION
-    if _has_prefix(tokens, _DESTRUCTIVE_PREFIXES):
-        return RiskClass.DESTRUCTIVE
     if _has_prefix(tokens, _WRITE_PREFIXES):
         return RiskClass.WRITE
     if _has_prefix(tokens, _READ_PREFIXES):

@@ -35,6 +35,7 @@ from agentveil_mcp_proxy.approval import (
 )
 from agentveil_mcp_proxy.classification import ToolCallClassifier
 from agentveil_mcp_proxy.evidence import (
+    ApprovalEvidenceError,
     ApprovalEvidenceStore,
     EvidenceExportError,
     EvidenceVerificationError,
@@ -71,6 +72,10 @@ CONTROL_GRANT_EXPIRY_WARNING_DAYS = 7
 REISSUE_GRANT_FORCE_THRESHOLD_SECONDS = 24 * 60 * 60
 DEFAULT_ALLOWED_CATEGORIES = ("mcp_proxy",)
 DEFAULT_EVIDENCE_VACUUM_MAX_AGE_DAYS = 90
+DEFAULT_TRUST_FROM_BUNDLE_WARNING = (
+    "default_trust_from_bundle: trusting bundle's embedded signer list; "
+    "pass --trusted-signer-did to verify against your own pinned set"
+)
 AGENTVEIL_DEV_SIGNER_DIDS = (
     "did:key:z6MkkvQQ9SxaNX9eEVHd5NtEamVY3YiZSpHZE567Vxs5jQQ3",
     "did:key:z6Mkjw22249tpNN4LJGLyq1oGSq1Skh3ks94fiMrgi4oqveo",
@@ -881,17 +886,21 @@ def verify_evidence(
     """Verify an evidence bundle offline."""
 
     out = out or sys.stdout
+    explicit_trusted_signers = tuple(trusted_signer_dids or ())
     result = verify_evidence_bundle_file(
         bundle_path,
-        trusted_signer_dids=trusted_signer_dids,
+        trusted_signer_dids=explicit_trusted_signers,
     )
+    warnings = list(result.warnings)
+    if not explicit_trusted_signers:
+        warnings.append(DEFAULT_TRUST_FROM_BUNDLE_WARNING)
     if output_format == "json":
         print(json.dumps({
             "status": "ok",
             "record_count": result.record_count,
             "signed_receipt_count": result.signed_receipt_count,
             "unverified_receipt_count": result.unverified_receipt_count,
-            "warnings": list(result.warnings),
+            "warnings": warnings,
             "chain_root_hash": result.chain_root_hash,
         }, sort_keys=True), file=out)
     else:
@@ -907,7 +916,7 @@ def verify_evidence(
                 "but no matching signed receipt in bundle",
                 file=out,
             )
-        for warning in result.warnings:
+        for warning in warnings:
             print(f"WARN: {warning}", file=out)
     return 0
 
@@ -1187,7 +1196,7 @@ def main(argv: list[str] | None = None) -> int:
                 before=args.before,
             )
             return 0
-    except (ProxyCliError, EvidenceExportError, EvidenceVerificationError) as exc:
+    except (ProxyCliError, ApprovalEvidenceError, EvidenceExportError, EvidenceVerificationError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return exc.exit_code if isinstance(exc, ProxyCliError) else 1
     raise AssertionError(f"unhandled command: {args.command}")
