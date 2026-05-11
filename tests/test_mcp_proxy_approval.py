@@ -9,14 +9,17 @@ import json
 from pathlib import Path
 import re
 import signal
+import socket
 import sys
 import threading
 import time
 from typing import Any
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 import pytest
 
+import agentveil_mcp_proxy.approval.server as approval_server_module
 import agentveil_mcp_proxy.cli as proxy_cli
 from agentveil_mcp_proxy.approval import (
     ApprovalFlowError,
@@ -182,6 +185,14 @@ def _get_csrf(client: httpx.Client, url: str) -> str:
     return match.group(1)
 
 
+def _get_csrf_and_cookie(client: httpx.Client, url: str) -> tuple[str, str]:
+    response = client.get(url)
+    assert response.status_code == 200
+    match = TOKEN_RE.search(response.text)
+    assert match
+    return match.group(1), response.headers["Set-Cookie"].split(";", 1)[0]
+
+
 def _post_decision(client: httpx.Client, url: str, *, decision: str, csrf: str, scope: str = "exact"):
     return client.post(url, data={
         "decision": decision,
@@ -225,6 +236,48 @@ def _request_and_post(
     return result_box["outcome"], prompt, response
 
 
+def _raw_http_request(host: str, port: int, request: str, *, timeout: float = 2.0) -> bytes:
+    with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        sock.sendall(request.encode("utf-8"))
+        chunks = []
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _raw_post(
+    server: ApprovalServer,
+    url: str,
+    *,
+    content_length: str,
+    body: str = "",
+    cookie: str | None = None,
+) -> bytes:
+    path = urlsplit(url).path
+    headers = [
+        f"POST {path} HTTP/1.1",
+        f"Host: {server.host}:{server.port}",
+        "Content-Type: application/x-www-form-urlencoded",
+        f"Content-Length: {content_length}",
+        "Connection: close",
+    ]
+    if cookie is not None:
+        headers.append(f"Cookie: {cookie}")
+    request = "\r\n".join(headers) + "\r\n\r\n" + body
+    return _raw_http_request(server.host, server.port, request)
+
+
+def _assert_status(raw_response: bytes, status_code: int) -> None:
+    status_line = raw_response.split(b"\r\n", 1)[0].decode("ascii", errors="replace")
+    assert status_line.startswith(f"HTTP/1.0 {status_code} ") or status_line.startswith(
+        f"HTTP/1.1 {status_code} "
+    ), raw_response.decode("utf-8", errors="replace")
+
+
 def test_approval_server_binds_only_to_127_0_0_1():
     server = ApprovalServer()
     server.start()
@@ -236,6 +289,99 @@ def test_approval_server_binds_only_to_127_0_0_1():
 
     with pytest.raises(Exception):
         ApprovalServer(host="0.0.0.0")
+
+
+def test_approval_server_request_threads_are_daemon(monkeypatch):
+    seen: dict[str, bool] = {}
+    original_do_get = approval_server_module._ApprovalRequestHandler.do_GET
+
+    def recording_do_get(self):
+        seen["daemon"] = threading.current_thread().daemon
+        return original_do_get(self)
+
+    monkeypatch.setattr(approval_server_module._ApprovalRequestHandler, "do_GET", recording_do_get)
+    server = ApprovalServer()
+    server.start()
+    try:
+        assert server._httpd is not None
+        assert server._httpd.daemon_threads is True
+        url = server.register(_prompt())
+        response = httpx.get(url)
+        assert response.status_code == 200
+        assert seen["daemon"] is True
+    finally:
+        server.stop()
+
+
+def _assert_invalid_content_length_rejected(content_length: str) -> None:
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        with httpx.Client() as client:
+            _csrf, cookie = _get_csrf_and_cookie(client, url)
+        response = _raw_post(server, url, content_length=content_length, cookie=cookie)
+        _assert_status(response, 400)
+        assert b"invalid content length" in response
+    finally:
+        server.stop()
+
+
+def test_post_with_non_numeric_content_length_returns_400():
+    _assert_invalid_content_length_rejected("abc")
+
+
+def test_post_with_negative_content_length_returns_400():
+    _assert_invalid_content_length_rejected("-100")
+
+
+def test_post_with_oversized_content_length_returns_400():
+    _assert_invalid_content_length_rejected("99999")
+
+
+def test_post_with_valid_content_length_succeeds():
+    server = ApprovalServer()
+    server.start()
+    try:
+        url = server.register(_prompt())
+        with httpx.Client() as client:
+            csrf, cookie = _get_csrf_and_cookie(client, url)
+        body = urlencode({
+            "decision": "approve",
+            "csrf_token": csrf,
+            "approval_scope": "exact",
+        })
+        response = _raw_post(
+            server,
+            url,
+            content_length=str(len(body.encode("utf-8"))),
+            body=body,
+            cookie=cookie,
+        )
+        _assert_status(response, 200)
+        decision = server.wait_for_decision("req-1", timeout=0.1)
+        assert decision is not None
+        assert decision.decision == "approve"
+    finally:
+        server.stop()
+
+
+def test_slow_client_request_socket_timeout(monkeypatch):
+    monkeypatch.setattr(approval_server_module, "REQUEST_SOCKET_TIMEOUT_SECONDS", 0.25)
+    server = ApprovalServer()
+    server.start()
+    try:
+        with socket.create_connection((server.host, server.port), timeout=2.0) as sock:
+            sock.settimeout(2.0)
+            sock.sendall(b"GET /approval/")
+            time.sleep(0.6)
+            try:
+                data = sock.recv(1)
+            except (ConnectionResetError, TimeoutError, socket.timeout):
+                data = b""
+        assert data == b""
+    finally:
+        server.stop()
 
 
 def test_post_without_token_returns_403():

@@ -115,6 +115,37 @@ The proxy writes the pending approval record before it renders the approval page
 or sends notifications. Approval, denial, and timeout decisions are written back
 to local evidence before the proxy acts on them.
 
+## Multi-IDE Deployment
+
+For developers running multiple LLM IDE clients, the canonical pattern is one
+MCP proxy per IDE.
+
+Each `agentveil-mcp-proxy run` invocation creates an independent process with:
+
+- A distinct approval server port, bound to `127.0.0.1` on a random unused port
+- An independent evidence database, scoped by `--home` or `AVP_HOME`
+- An independent Runtime Gate session, identity, and control grant
+- Independent circuit breaker state
+
+This process-level isolation avoids shared approval state between proxy
+instances on the same host. Each IDE's MCP server configuration should point at
+its own proxy command.
+
+Example: two IDEs on one machine
+
+```bash
+AVP_HOME="$HOME/.avp-claude" agentveil-mcp-proxy run
+AVP_HOME="$HOME/.avp-cursor" agentveil-mcp-proxy run
+```
+
+Each proxy has its own home tree containing its identity, control grant, and
+`evidence.sqlite`. Decisions in one proxy do not authorize or deny requests in
+the other.
+
+For centralized policy enforcement across multiple developers, enforce policy
+in the AVP backend rather than multiplexing multiple IDE clients through one
+local proxy process.
+
 ## Headless Approval Mode
 
 For CI or scheduled jobs, run with deny-by-default headless behavior:

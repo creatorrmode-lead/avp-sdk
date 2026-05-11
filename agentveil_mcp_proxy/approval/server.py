@@ -15,6 +15,8 @@ from typing import Any
 from urllib.parse import parse_qs
 
 
+MAX_POST_BODY_BYTES = 8192
+REQUEST_SOCKET_TIMEOUT_SECONDS = 5.0
 SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -27,6 +29,10 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
 }
 COOKIE_NAME = "avp_approval_session"
+
+
+class _DaemonThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
 
 
 class ApprovalServerError(RuntimeError):
@@ -84,7 +90,7 @@ class ApprovalServer:
         self._decisions: dict[str, ApprovalServerDecision] = {}
         self._decision_events: dict[str, threading.Event] = {}
         self._terminal_requests: set[str] = set()
-        self._httpd: ThreadingHTTPServer | None = None
+        self._httpd: _DaemonThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     @property
@@ -118,7 +124,7 @@ class ApprovalServer:
         class Handler(_ApprovalRequestHandler):
             server_owner = owner
 
-        self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)
+        self._httpd = _DaemonThreadingHTTPServer((self.host, self.port), Handler)
         self.host, self.port = self._httpd.server_address[:2]
         self._thread = threading.Thread(
             target=self._httpd.serve_forever,
@@ -244,6 +250,10 @@ class ApprovalServer:
 class _ApprovalRequestHandler(BaseHTTPRequestHandler):
     server_owner: ApprovalServer
 
+    def setup(self) -> None:
+        super().setup()
+        self.request.settimeout(REQUEST_SOCKET_TIMEOUT_SECONDS)
+
     def log_message(self, _format: str, *_args: Any) -> None:
         return
 
@@ -283,8 +293,16 @@ class _ApprovalRequestHandler(BaseHTTPRequestHandler):
         if not self.server_owner._valid_cookie(self.headers.get("Cookie")):
             self._send_text(HTTPStatus.FORBIDDEN, "forbidden")
             return
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        body = self.rfile.read(min(length, 8192)).decode("utf-8", errors="replace")
+        raw_length = self.headers.get("Content-Length", "0") or "0"
+        try:
+            length = int(raw_length)
+        except ValueError:
+            self._send_text(HTTPStatus.BAD_REQUEST, "invalid content length")
+            return
+        if length < 0 or length > MAX_POST_BODY_BYTES:
+            self._send_text(HTTPStatus.BAD_REQUEST, "invalid content length")
+            return
+        body = self.rfile.read(length).decode("utf-8", errors="replace")
         form = parse_qs(body, keep_blank_values=True)
         csrf = (form.get("csrf_token") or [""])[0]
         if not hmac.compare_digest(csrf, prompt.csrf_token):
