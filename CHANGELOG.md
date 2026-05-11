@@ -9,6 +9,122 @@ All notable changes to the `agentveil` SDK.
   named while AgentVeil is described as an external trust and reputation
   integration.
 
+## [0.7.14] - 2026-05-11
+
+AgentVeil MCP Proxy v0.1 first public release. Action Control Plane for IDE
+MCP clients wrapping downstream MCP servers with runtime decision gating,
+human approval routing, durable signed evidence, and replay defense.
+
+### Added
+- Added the `agentveil-mcp-proxy` console script and
+  `python -m agentveil_mcp_proxy` entry point for MCP transport proxy
+  operation.
+- Added encrypted local proxy identity storage with Argon2id and SecretBox,
+  passphrase-file support, `AVP_PROXY_PASSPHRASE`, a 12-character minimum for
+  new identities, and documented passphrase-source trade-offs.
+- Added Runtime Gate integration with DecisionReceipt verification, schema
+  enforcement, audit ID binding, payload hash binding, risk class binding,
+  policy context hash binding, and circuit breaker handling.
+- Added a local TTL-capped DecisionReceipt replay cache as a v0.1 compensating
+  control before the backend nonce/freshness protocol update.
+- Added the loopback browser approval server with CSRF checks, HMAC cookies,
+  per-prompt tokens, Content-Length bounds, socket timeouts, and
+  `ThreadingHTTPServer`.
+- Added a durable SQLite evidence store with WAL mode, hash chaining, fsync
+  durability, owner-only permissions, and auxiliary WAL/SHM permission
+  hardening after commits.
+- Added offline evidence bundle export and verification covering chain
+  integrity, signed receipt validation, receipt binding checks, audit ID
+  matching, and receipt-reference dedupe.
+- Added headless approval mode and bounded headless policy support with
+  owner-only policy-file validation.
+- Added built-in policy packs for `default`, `github`, `filesystem`, and
+  `shell`, including broadened destructive coverage for `purge_*`,
+  `truncate_*`, `wipe_*`, `format_*`, `rm`, `rmdir_*`, `unlink_*`, and
+  `clean_*` patterns where applicable.
+- Expanded destructive classification prefixes with `purge`, `truncate`,
+  `wipe`, `format`, `rm`, `rmdir`, `unlink`, and `clean`.
+- Added cross-platform CI coverage across 3 operating systems and 4 Python
+  versions, workflow dispatch support, pinned GitHub Actions SHAs, and
+  `permissions: contents: read`.
+- Added `env_passthrough` blocking for the reserved `AVP_*` prefix so proxy
+  secrets cannot be forwarded to downstream MCP servers by configuration.
+- Added the MCP Proxy subproject README and the operations guide at
+  `docs/MCP_PROXY_OPERATIONS.md`.
+
+### Security
+- Completed the P10.5 security audit remediation train: 12 MEDIUM and 8 LOW
+  findings were identified across independent passes; 10 MEDIUM findings were
+  closed in P10.6-P10.10, M-2 received the local replay-cache mitigation, and
+  M-10 was deferred to v0.1.1.
+- Completed the post-P10.9 mid-train audit: 2 MEDIUM and 3 LOW findings were
+  identified; MT-1, MT-2, and MT-3 were closed in P10.10, while MT-4 and MT-5
+  were accepted as v0.1 LOW risk.
+- Annotated the 14-site Bandit B608 SQL false-positive cluster with narrow
+  `# nosec B608` rationale comments.
+- Verified public documentation surfaces for attribution wording and prohibited
+  product terminology.
+- Added receipt `audit_id` cross-checking and duplicate receipt-reference
+  rejection to the offline verifier.
+- Added positive-value validation for RuntimeGateClient replay-cache settings.
+- Hardened CLI identity, config, and grant writes with file fsync and parent
+  directory fsync.
+- Added a 1 MiB client-to-proxy JSON-RPC line cap matching the downstream
+  message cap.
+- Bounded downstream response bookkeeping with in-flight ID tracking,
+  TTL-pruned timed-out IDs, unsolicited-response counting, and retained
+  response caps.
+- Required DecisionReceipt schema, audit ID, and receipt binding fields in
+  offline evidence verification.
+
+### Known Limitations
+- **Backend protocol nonce/freshness:** the local replay cache mitigates
+  same-process replays within a five-minute window. The v0.1.1 protocol update
+  adds backend-issued nonce plus `issued_at` and `expires_at` fields to a new
+  `decision_receipt/3` schema. Same-intent replays across proxy restarts and
+  against a compromised backend response channel remain possible in v0.1.
+- **Windows Job Object race:** Windows downstream process containment has a
+  narrow `start()` window where a child process can spawn descendants before
+  assignment to the Job Object. Use an external Windows service supervisor for
+  production Windows deployments until the v0.1.1 fix lands.
+- **OS keychain identity storage:** v0.1 uses passphrase-encrypted Argon2id
+  identity files. v0.1.1+ adds opt-in macOS Keychain, Linux Secret Service, and
+  Windows Credential Manager integration.
+- **P7a WAL/SHM creation-window race:** the evidence store chmods auxiliary
+  SQLite files after every commit; a small in-flight transaction window still
+  depends on the user umask. Accepted as v0.1 LOW risk.
+- **P7b runtime-only chain validation:** chain integrity is validated at store
+  open and after write transactions; there is no periodic background chain
+  validation during a long-running proxy. Periodic restarts are the v0.1
+  mitigation.
+- **MT-4 receipt cache eviction under sustained burst:** sustained high-volume
+  legitimate receipts can evict captured receipts before the nominal TTL,
+  weakening local replay defense in adversarial timing scenarios. The v0.1.1
+  protocol nonce/freshness fix supersedes this mitigation.
+- **MT-5 `granted_by_request_id` reference validation:** the verifier does not
+  dereference cache-hit `granted_by_request_id` values to prove the referenced
+  record exists in the same bundle. Manual auditors should cross-check those
+  references when reviewing cache-hit evidence.
+
+### Audit References
+- Closed P10.5-security findings: M-1, M-3, M-4, M-5, M-6, M-7, M-8, M-9.a,
+  M-9.b, M-11, M-12, L-1, L-2, L-3, Codex MEDIUM-1, Codex LOW-2, and
+  Codex LOW-3.
+- Closed mid-train audit findings: MT-1, MT-2, and MT-3.
+- Partial mitigation: M-2 local replay cache; full protocol fix deferred to
+  v0.1.1.
+- Deferred v0.1.1: M-2 and M-10.
+- Accepted as v0.1 LOW risk: MT-4, MT-5, P7a residual, and L-4 through L-8.
+- Commits: `0e6583c` (P10.6), `5c14f37` (P10.7), `5a89148` (P10.8),
+  `de43147` (P10.9), `3577e4b` (P10.10), and `bddf600` (P10.11).
+
+### Validation
+- P11 release gate passed: main CI matrix green on 12/12 cells, full local
+  pytest passed with `642 passed, 1 skipped`, Bandit reported 0 HIGH and
+  0 MEDIUM findings, pip-audit reported 0 known vulnerabilities, public-surface
+  wording scans passed, console scripts worked, build artifacts included the
+  MCP Proxy README, and license/security metadata was verified.
+
 ## [0.7.13] - 2026-05-08
 
 Fresh release for the MCP action-control toolbox expansion.
