@@ -15,6 +15,7 @@ import agentveil_mcp_proxy.cli as proxy_cli
 from agentveil.delegation import verify_delegation
 from agentveil_mcp_proxy.cli import (
     AGENTVEIL_DEV_SIGNER_DIDS,
+    MIN_IDENTITY_PASSPHRASE_LENGTH,
     ProxyCliError,
     doctor_proxy,
     export_evidence,
@@ -25,6 +26,7 @@ from agentveil_mcp_proxy.cli import (
     run_proxy,
 )
 from agentveil_mcp_proxy.evidence import ApprovalEvidenceStore, PendingApproval
+from agentveil_mcp_proxy.identity import encrypted_identity_payload, load_agent_from_identity
 from agentveil_mcp_proxy.policy import ProxyConfig
 
 
@@ -188,6 +190,76 @@ def test_init_defaults_to_encrypted_storage_with_passphrase(tmp_path):
     assert identity["encrypted_blob"]
 
 
+def test_init_rejects_passphrase_arg_shorter_than_min(tmp_path):
+    with pytest.raises(ProxyCliError, match="at least"):
+        init_proxy(home=tmp_path / "avp-home", agent_name="proxy", passphrase="short")
+
+
+def test_init_rejects_passphrase_file_with_short_value(tmp_path):
+    passphrase_file = tmp_path / "passphrase.txt"
+    passphrase_file.write_text("short\n", encoding="utf-8")
+    os.chmod(passphrase_file, 0o600)
+
+    with pytest.raises(ProxyCliError, match="at least"):
+        init_proxy(
+            home=tmp_path / "avp-home",
+            agent_name="proxy",
+            passphrase_file=passphrase_file,
+        )
+
+
+def test_init_rejects_env_passphrase_too_short(tmp_path, monkeypatch):
+    monkeypatch.setenv("AVP_PROXY_PASSPHRASE", "short")
+
+    with pytest.raises(ProxyCliError, match="at least"):
+        init_proxy(home=tmp_path / "avp-home", agent_name="proxy")
+
+
+def test_init_rejects_tty_passphrase_too_short(tmp_path, monkeypatch):
+    class TTY(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.delenv("AVP_PROXY_PASSPHRASE", raising=False)
+    monkeypatch.setattr(proxy_cli.sys, "stdin", TTY(""))
+    monkeypatch.setattr(proxy_cli.getpass, "getpass", lambda _prompt: "short")
+
+    with pytest.raises(ProxyCliError, match="at least"):
+        init_proxy(home=tmp_path / "avp-home", agent_name="proxy")
+
+
+def test_init_accepts_passphrase_at_exact_min_length(tmp_path):
+    passphrase = "a" * MIN_IDENTITY_PASSPHRASE_LENGTH
+
+    result = init_proxy(
+        home=tmp_path / "avp-home",
+        agent_name="proxy",
+        passphrase=passphrase,
+    )
+
+    assert _load(result.identity_path)["encrypted"] is True
+
+
+def test_doctor_accepts_pre_existing_short_passphrase_identity(tmp_path):
+    home = tmp_path / "avp-home"
+    result = init_proxy(home=home, agent_name="proxy", plaintext=True)
+    plaintext_identity = _load(result.identity_path)
+    agent = load_agent_from_identity(
+        plaintext_identity,
+        base_url=plaintext_identity["base_url"],
+        agent_name=plaintext_identity["name"],
+    )
+    result.identity_path.write_text(
+        json.dumps(encrypted_identity_payload(agent, "short")),
+        encoding="utf-8",
+    )
+    os.chmod(result.identity_path, 0o600)
+    out = io.StringIO()
+
+    assert doctor_proxy(home=home, passphrase="short", out=out) == 0
+    assert "OK: trusted signers 2" in out.getvalue()
+
+
 def test_init_plaintext_flag_explicitly_required_for_plaintext_storage(tmp_path, monkeypatch):
     class NonTTY(io.StringIO):
         def isatty(self) -> bool:
@@ -221,6 +293,67 @@ def test_init_plaintext_flag_emits_audit_warning(tmp_path):
     assert "private_key_hex" in identity
     assert "--plaintext stores the MCP proxy private key unencrypted" in err.getvalue()
     assert identity["private_key_hex"] not in err.getvalue()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode checks do not map to Windows ACLs")
+def test_read_passphrase_file_rejects_world_readable_on_posix(tmp_path):
+    passphrase_file = tmp_path / "passphrase.txt"
+    passphrase_file.write_text(TEST_PASSPHRASE, encoding="utf-8")
+    os.chmod(passphrase_file, 0o644)
+
+    with pytest.raises(ProxyCliError, match="owner-only"):
+        proxy_cli._read_passphrase_file(passphrase_file)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode checks do not map to Windows ACLs")
+def test_read_passphrase_file_rejects_group_readable_on_posix(tmp_path):
+    passphrase_file = tmp_path / "passphrase.txt"
+    passphrase_file.write_text(TEST_PASSPHRASE, encoding="utf-8")
+    os.chmod(passphrase_file, 0o640)
+
+    with pytest.raises(ProxyCliError, match="owner-only"):
+        proxy_cli._read_passphrase_file(passphrase_file)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode checks do not map to Windows ACLs")
+def test_read_passphrase_file_accepts_0600_on_posix(tmp_path):
+    passphrase_file = tmp_path / "passphrase.txt"
+    passphrase_file.write_text(TEST_PASSPHRASE, encoding="utf-8")
+    os.chmod(passphrase_file, 0o600)
+
+    assert proxy_cli._read_passphrase_file(passphrase_file) == TEST_PASSPHRASE
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode checks do not map to Windows ACLs")
+def test_read_passphrase_file_accepts_0400_on_posix(tmp_path):
+    passphrase_file = tmp_path / "passphrase.txt"
+    passphrase_file.write_text(TEST_PASSPHRASE, encoding="utf-8")
+    os.chmod(passphrase_file, 0o400)
+
+    assert proxy_cli._read_passphrase_file(passphrase_file) == TEST_PASSPHRASE
+
+
+def test_read_passphrase_file_skips_perm_check_on_windows(tmp_path, monkeypatch):
+    passphrase_file = tmp_path / "passphrase.txt"
+    passphrase_file.write_text(TEST_PASSPHRASE, encoding="utf-8")
+    os.chmod(passphrase_file, 0o644)
+    monkeypatch.setattr(proxy_cli.os, "name", "nt")
+
+    assert proxy_cli._read_passphrase_file(passphrase_file) == TEST_PASSPHRASE
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode checks do not map to Windows ACLs")
+def test_init_with_passphrase_file_validates_permissions(tmp_path):
+    passphrase_file = tmp_path / "passphrase.txt"
+    passphrase_file.write_text(TEST_PASSPHRASE, encoding="utf-8")
+    os.chmod(passphrase_file, 0o644)
+
+    with pytest.raises(ProxyCliError, match="owner-only"):
+        init_proxy(
+            home=tmp_path / "avp-home",
+            agent_name="proxy",
+            passphrase_file=passphrase_file,
+        )
 
 
 def test_init_refuses_to_overwrite_existing_identity_without_force(tmp_path):

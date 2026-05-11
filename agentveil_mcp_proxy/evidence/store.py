@@ -754,13 +754,22 @@ def _normalize_status(value: str | ApprovalStatus) -> str:
 
 
 def _require_prefixed_hash(column: str, value: Any) -> None:
-    if not isinstance(value, str) or not value.startswith("sha256:") or len(value) <= len("sha256:"):
+    if not isinstance(value, str) or not value.startswith("sha256:"):
         raise ApprovalEvidenceTransitionError(f"{column} must be a sha256-prefixed hash")
+    digest = value[len("sha256:"):]
+    if len(digest) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in digest):
+        raise ApprovalEvidenceTransitionError(
+            f"{column} must be a sha256-prefixed hash with 64 hex chars"
+        )
 
 
 def _require_hash_like(column: str, value: Any) -> None:
-    if not isinstance(value, str) or not value:
-        raise ApprovalEvidenceTransitionError(f"{column} must be a non-empty hash")
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(ch not in "0123456789abcdefABCDEF" for ch in value)
+    ):
+        raise ApprovalEvidenceTransitionError(f"{column} must be a 64-char hex hash")
 
 
 _CREATE_PENDING_APPROVALS_SQL = """

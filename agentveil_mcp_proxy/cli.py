@@ -71,6 +71,7 @@ DEFAULT_AGENT_NAME = "agentveil-mcp-proxy"
 DEFAULT_CONTROL_GRANT_TTL_DAYS = 30
 CONTROL_GRANT_EXPIRY_WARNING_DAYS = 7
 REISSUE_GRANT_FORCE_THRESHOLD_SECONDS = 24 * 60 * 60
+MIN_IDENTITY_PASSPHRASE_LENGTH = 12
 DEFAULT_ALLOWED_CATEGORIES = ("mcp_proxy",)
 DEFAULT_EVIDENCE_VACUUM_MAX_AGE_DAYS = 90
 DEFAULT_TRUST_FROM_BUNDLE_WARNING = (
@@ -244,13 +245,36 @@ def _read_json(path: Path, label: str) -> dict[str, Any]:
     return data
 
 
-def _read_passphrase_file(path: Path) -> str:
+def _require_owner_only_passphrase_file(path: Path) -> None:
+    if os.name == "nt":
+        return
     try:
-        value = path.expanduser().read_text(encoding="utf-8").strip()
+        mode = path.stat().st_mode
+    except OSError as exc:
+        raise ProxyCliError(f"passphrase file unavailable: {path}", exit_code=1) from exc
+    if mode & 0o077:
+        raise ProxyCliError(
+            "passphrase file permissions must be owner-only (0o600 or 0o400)"
+        )
+
+
+def _read_passphrase_file(path: Path) -> str:
+    expanded = path.expanduser()
+    _require_owner_only_passphrase_file(expanded)
+    try:
+        value = expanded.read_text(encoding="utf-8").strip()
     except OSError as exc:
         raise ProxyCliError(f"passphrase file unavailable: {path}", exit_code=1) from exc
     if not value:
         raise ProxyCliError("passphrase file is empty")
+    return value
+
+
+def _validate_passphrase_strength(value: str) -> str:
+    if len(value) < MIN_IDENTITY_PASSPHRASE_LENGTH:
+        raise ProxyCliError(
+            f"passphrase must be at least {MIN_IDENTITY_PASSPHRASE_LENGTH} characters"
+        )
     return value
 
 
@@ -288,7 +312,7 @@ def _resolve_new_identity_passphrase(
 
     resolved = _explicit_passphrase(passphrase=passphrase, passphrase_file=passphrase_file)
     if resolved is not None:
-        return resolved
+        return _validate_passphrase_strength(resolved)
 
     if sys.stdin.isatty():
         first = getpass.getpass("MCP proxy identity passphrase: ")
@@ -297,7 +321,7 @@ def _resolve_new_identity_passphrase(
         second = getpass.getpass("Confirm MCP proxy identity passphrase: ")
         if first != second:
             raise ProxyCliError("passphrases do not match")
-        return first
+        return _validate_passphrase_strength(first)
 
     raise ProxyCliError(
         "encrypted identity passphrase required; pass --passphrase, "

@@ -17,6 +17,7 @@ from nacl.signing import SigningKey
 
 from agentveil.agent import AVPAgent
 from agentveil.delegation import _public_key_to_did
+from agentveil_mcp_proxy.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 from agentveil_mcp_proxy.classification import ToolCallClassifier
 from agentveil_mcp_proxy.passthrough import (
     DownstreamConfig,
@@ -33,6 +34,7 @@ from agentveil_mcp_proxy.runtime_gate import (
     RuntimeGateUnavailableError,
     RuntimeGateUntrustedError,
 )
+import agentveil_mcp_proxy.runtime_gate as runtime_gate_module
 
 
 BACKEND_SEED = bytes.fromhex("11" * 32)
@@ -144,6 +146,7 @@ def _decision_receipt(
     *,
     decision: str = "ALLOW",
     approval_id: str | None = None,
+    audit_id: str = AUDIT_ID,
     seed: bytes = BACKEND_SEED,
     backend_risk_class: str = "unknown",
     backend_policy_context_hash: str = "b" * 64,
@@ -151,7 +154,7 @@ def _decision_receipt(
 ) -> str:
     body = {
         "schema_version": "decision_receipt/2",
-        "audit_id": AUDIT_ID,
+        "audit_id": audit_id,
         "agent_did": AGENT_DID,
         "action": request["action"],
         "resource": request["resource"],
@@ -201,6 +204,27 @@ class RecordingAgent:
                 seed=self.seed,
                 omit_fields=self.omit_receipt_fields,
             ),
+        }
+
+    def get_decision_receipt(self, audit_id: str) -> str:
+        raise AssertionError("inline decision_receipt_jcs should avoid a receipt fetch")
+
+
+class SequencedReceiptAgent:
+    did = AGENT_DID
+
+    def __init__(self, audit_ids: list[str]):
+        self.audit_ids = list(audit_ids)
+        self.calls: list[dict] = []
+
+    def runtime_evaluate(self, **kwargs):
+        self.calls.append(kwargs)
+        audit_id = self.audit_ids.pop(0)
+        receipt_jcs = _decision_receipt(kwargs, audit_id=audit_id)
+        return {
+            "audit_id": audit_id,
+            "decision": "ALLOW",
+            "decision_receipt_jcs": receipt_jcs,
         }
 
     def get_decision_receipt(self, audit_id: str) -> str:
@@ -307,6 +331,90 @@ def test_ask_backend_runtime_request_is_privacy_safe_metadata_only():
         "github.create_issue",
     ):
         assert forbidden not in body_text
+
+
+def test_replay_of_previously_verified_receipt_is_rejected_as_untrusted():
+    config = _config()
+    agent = RecordingAgent()
+    client = RuntimeGateClient(agent=agent, config=config, control_grant={"id": "grant"})
+
+    assert client.evaluate(_classification(config)).decision == "ALLOW"
+
+    with pytest.raises(RuntimeGateUntrustedError, match="decision receipt replay detected"):
+        client.evaluate(_classification(config))
+
+
+def test_distinct_receipts_for_same_intent_both_pass():
+    config = _config()
+    agent = SequencedReceiptAgent(["audit-1", "audit-2"])
+    client = RuntimeGateClient(agent=agent, config=config, control_grant={"id": "grant"})
+
+    first = client.evaluate(_classification(config))
+    second = client.evaluate(_classification(config))
+
+    assert first.decision == "ALLOW"
+    assert second.decision == "ALLOW"
+    assert first.receipt_digest != second.receipt_digest
+    assert client.seen_receipt_cache_size == 2
+
+
+def test_seen_receipt_cache_prunes_after_ttl(monkeypatch):
+    clock = {"now": 100.0}
+    monkeypatch.setattr(runtime_gate_module.time, "monotonic", lambda: clock["now"])
+    config = _config()
+    agent = RecordingAgent()
+    client = RuntimeGateClient(
+        agent=agent,
+        config=config,
+        control_grant={"id": "grant"},
+        cache_ttl_seconds=5.0,
+    )
+
+    assert client.evaluate(_classification(config)).decision == "ALLOW"
+    clock["now"] = 106.0
+
+    assert client.evaluate(_classification(config)).decision == "ALLOW"
+    assert client.seen_receipt_cache_size == 1
+
+
+def test_seen_receipt_cache_evicts_oldest_when_max_entries_exceeded():
+    config = _config()
+    agent = SequencedReceiptAgent(["audit-1", "audit-2", "audit-3"])
+    client = RuntimeGateClient(
+        agent=agent,
+        config=config,
+        control_grant={"id": "grant"},
+        cache_max_entries=2,
+    )
+
+    digests = [
+        client.evaluate(_classification(config)).receipt_digest,
+        client.evaluate(_classification(config)).receipt_digest,
+        client.evaluate(_classification(config)).receipt_digest,
+    ]
+
+    assert client.seen_receipt_cache_size == 2
+    assert digests[0] not in client._seen_receipt_digests
+    assert digests[1] in client._seen_receipt_digests
+    assert digests[2] in client._seen_receipt_digests
+
+
+def test_replay_detection_does_not_record_circuit_failure():
+    config = _config()
+    breaker = CircuitBreaker(CircuitBreakerConfig(failures_before_open=1))
+    agent = RecordingAgent()
+    client = RuntimeGateClient(
+        agent=agent,
+        config=config,
+        control_grant={"id": "grant"},
+        circuit_breaker=breaker,
+    )
+
+    assert client.evaluate(_classification(config)).decision == "ALLOW"
+    with pytest.raises(RuntimeGateUntrustedError, match="decision receipt replay detected"):
+        client.evaluate(_classification(config))
+
+    assert breaker.state_change_count == 0
 
 
 def test_runtime_evaluate_wire_body_excludes_raw_mcp_args_and_secrets():

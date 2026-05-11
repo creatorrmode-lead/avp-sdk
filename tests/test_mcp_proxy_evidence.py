@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+import agentveil_mcp_proxy.evidence.store as store_module
 from agentveil_mcp_proxy.evidence import (
     ApprovalEvidenceCapacityError,
     ApprovalEvidenceDuplicateError,
@@ -139,6 +140,56 @@ def _dump_db_text(db_path: Path) -> str:
         return json.dumps([dict(row) for row in rows], sort_keys=True)
     finally:
         conn.close()
+
+
+def test_require_prefixed_hash_rejects_non_hex_digest():
+    with pytest.raises(ApprovalEvidenceTransitionError, match="64 hex chars"):
+        store_module._require_prefixed_hash("payload_hash", "sha256:" + "g" * 64)
+
+
+def test_require_prefixed_hash_rejects_wrong_length():
+    with pytest.raises(ApprovalEvidenceTransitionError, match="64 hex chars"):
+        store_module._require_prefixed_hash("payload_hash", "sha256:abc")
+
+
+def test_require_prefixed_hash_accepts_lowercase_64_hex():
+    store_module._require_prefixed_hash("payload_hash", "sha256:" + "a" * 64)
+
+
+def test_require_prefixed_hash_accepts_uppercase_64_hex():
+    store_module._require_prefixed_hash("payload_hash", "sha256:" + "A" * 64)
+
+
+def test_require_hash_like_rejects_non_hex_chars():
+    with pytest.raises(ApprovalEvidenceTransitionError, match="64-char hex"):
+        store_module._require_hash_like("policy_context_hash", "g" * 64)
+
+
+def test_require_hash_like_rejects_wrong_length():
+    with pytest.raises(ApprovalEvidenceTransitionError, match="64-char hex"):
+        store_module._require_hash_like("policy_context_hash", "abc")
+
+
+def test_require_hash_like_accepts_64_hex():
+    store_module._require_hash_like("policy_context_hash", "A" * 64)
+
+
+def test_write_pending_rejects_record_with_malformed_payload_hash(tmp_path):
+    with _store(tmp_path) as store:
+        with pytest.raises(ApprovalEvidenceTransitionError, match="payload_hash"):
+            store.write_pending(_record("req-bad-hash", payload_hash="sha256:not_hex"))
+
+
+def test_transition_rejects_update_with_malformed_decision_receipt_sha256(tmp_path):
+    with _store(tmp_path) as store:
+        store.write_pending(_record("req-bad-receipt-hash"))
+        with pytest.raises(ApprovalEvidenceTransitionError, match="decision_receipt_sha256"):
+            store.transition(
+                "req-bad-receipt-hash",
+                ApprovalStatus.APPROVED.value,
+                approval_token_hash=APPROVAL_TOKEN_HASH,
+                decision_receipt_sha256="not-hex",
+            )
 
 
 def test_write_pending_creates_durable_record_with_all_fields(tmp_path):

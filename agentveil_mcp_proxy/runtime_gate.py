@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import threading
+import time
 from typing import Any, Callable, Mapping
 
 from agentveil.agent import AVPAgent
@@ -32,6 +34,8 @@ from agentveil_mcp_proxy.policy import ProxyConfig
 
 DEFAULT_RUNTIME_GATE_TIMEOUT_SECONDS = 2.0
 DEFAULT_RUNTIME_ENVIRONMENT = "mcp_proxy"
+DEFAULT_DECISION_RECEIPT_CACHE_TTL_SECONDS = 300.0
+DEFAULT_DECISION_RECEIPT_CACHE_MAX_ENTRIES = 1024
 DECISION_ALLOW = "ALLOW"
 DECISION_BLOCK = "BLOCK"
 DECISION_WAITING = "WAITING_FOR_HUMAN_APPROVAL"
@@ -92,6 +96,8 @@ class RuntimeGateClient:
         control_grant: Mapping[str, Any],
         environment: str = DEFAULT_RUNTIME_ENVIRONMENT,
         circuit_breaker: CircuitBreaker | None = None,
+        cache_ttl_seconds: float = DEFAULT_DECISION_RECEIPT_CACHE_TTL_SECONDS,
+        cache_max_entries: int = DEFAULT_DECISION_RECEIPT_CACHE_MAX_ENTRIES,
     ):
         self.agent = agent
         self.config = config
@@ -101,6 +107,10 @@ class RuntimeGateClient:
         self.circuit_breaker = circuit_breaker or CircuitBreaker(
             config.circuit_breaker.to_runtime_config()
         )
+        self.cache_ttl_seconds = float(cache_ttl_seconds)
+        self.cache_max_entries = int(cache_max_entries)
+        self._seen_receipt_digests: dict[str, float] = {}
+        self._cache_lock = threading.Lock()
 
     @classmethod
     def from_files(
@@ -114,6 +124,8 @@ class RuntimeGateClient:
         timeout: float = DEFAULT_RUNTIME_GATE_TIMEOUT_SECONDS,
         environment: str = DEFAULT_RUNTIME_ENVIRONMENT,
         circuit_breaker: CircuitBreaker | None = None,
+        cache_ttl_seconds: float = DEFAULT_DECISION_RECEIPT_CACHE_TTL_SECONDS,
+        cache_max_entries: int = DEFAULT_DECISION_RECEIPT_CACHE_MAX_ENTRIES,
     ) -> "RuntimeGateClient":
         """Load local proxy identity/control grant and build a Runtime Gate client."""
 
@@ -154,6 +166,8 @@ class RuntimeGateClient:
             control_grant=control_grant,
             environment=environment,
             circuit_breaker=circuit_breaker,
+            cache_ttl_seconds=cache_ttl_seconds,
+            cache_max_entries=cache_max_entries,
         )
 
     def evaluate(self, classification: ClassifiedToolCall) -> RuntimeGateDecision:
@@ -182,6 +196,7 @@ class RuntimeGateClient:
 
             receipt_jcs = self._decision_receipt_jcs(response)
             verified = self._verify_decision_receipt(receipt_jcs)
+            self._record_seen_receipt_digest(verified["digest"])
             body = verified["body"]
             self._validate_decision_body(body, response=response, request=request)
         except RuntimeGateUnavailableError:
@@ -206,6 +221,14 @@ class RuntimeGateClient:
         """Return and clear sanitized circuit breaker state-change events."""
 
         return self.circuit_breaker.drain_events()
+
+    @property
+    def seen_receipt_cache_size(self) -> int:
+        """Return the current number of replay-cache receipt digests."""
+
+        with self._cache_lock:
+            self._prune_seen_receipts_locked(time.monotonic())
+            return len(self._seen_receipt_digests)
 
     def _build_request(self, classification: ClassifiedToolCall) -> _RuntimeGateRequest:
         metadata = classification.backend_metadata()
@@ -247,6 +270,32 @@ class RuntimeGateClient:
             except ProofVerificationError as exc:
                 last_error = exc
         raise RuntimeGateUntrustedError("runtime decision receipt signer is not trusted") from last_error
+
+    def _record_seen_receipt_digest(self, digest: str) -> None:
+        now = time.monotonic()
+        with self._cache_lock:
+            self._prune_seen_receipts_locked(now)
+            if digest in self._seen_receipt_digests:
+                raise RuntimeGateUntrustedError("decision receipt replay detected")
+            self._seen_receipt_digests[digest] = now + self.cache_ttl_seconds
+            self._evict_seen_receipts_locked()
+
+    def _prune_seen_receipts_locked(self, now: float) -> None:
+        expired = [
+            digest
+            for digest, expires_at in self._seen_receipt_digests.items()
+            if expires_at <= now
+        ]
+        for digest in expired:
+            self._seen_receipt_digests.pop(digest, None)
+
+    def _evict_seen_receipts_locked(self) -> None:
+        while len(self._seen_receipt_digests) > self.cache_max_entries:
+            oldest_digest = min(
+                self._seen_receipt_digests,
+                key=self._seen_receipt_digests.__getitem__,
+            )
+            self._seen_receipt_digests.pop(oldest_digest, None)
 
     def _validate_decision_body(
         self,
@@ -330,6 +379,8 @@ __all__ = [
     "DECISION_ALLOW",
     "DECISION_BLOCK",
     "DECISION_WAITING",
+    "DEFAULT_DECISION_RECEIPT_CACHE_MAX_ENTRIES",
+    "DEFAULT_DECISION_RECEIPT_CACHE_TTL_SECONDS",
     "DEFAULT_RUNTIME_GATE_TIMEOUT_SECONDS",
     "DEFAULT_RUNTIME_ENVIRONMENT",
     "RuntimeGateClient",
