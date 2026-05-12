@@ -1,15 +1,15 @@
 [project]
 name = "agentveil"
-version = "0.7.14"
+version = "0.7.15"
 description = "Python SDK for agent action control: posture checks, action gates, signed receipts, and proof packets"
 readme = {file = "README_PYPI.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{name = "Oleg Boiko", email = "ob@agentveil.dev"}]
 maintainers = [{name = "Oleg Boiko", email = "ob@agentveil.dev"}]
-keywords = ["ai", "agents", "agent-control", "runtime-gate", "controlled-actions", "signed-receipts", "did", "identity", "mcp", "reputation"]
+keywords = ["ai", "agents", "agent-control", "runtime-gate", "controlled-actions", "signed-receipts", "did", "identity", "mcp", "mcp-proxy", "reputation"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries",
     "Programming Language :: Python :: 3",
@@ -29,10 +29,10 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://agentveil.dev"
-Documentation = "https://github.com/agentveil-protocol/avp-sdk#readme"
-Repository = "https://github.com/agentveil-protocol/avp-sdk"
-Changelog = "https://github.com/agentveil-protocol/avp-sdk/releases"
-Issues = "https://github.com/agentveil-protocol/avp-sdk/issues"
+Documentation = "https://github.com/agentveil-protocol/agentveil-sdk#readme"
+Repository = "https://github.com/agentveil-protocol/agentveil-sdk"
+Changelog = "https://github.com/agentveil-protocol/agentveil-sdk/releases"
+Issues = "https://github.com/agentveil-protocol/agentveil-sdk/issues"
 
 [build-system]
 requires = ["setuptools>=68.0"]

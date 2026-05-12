@@ -51,13 +51,13 @@ trigger conditions, and dispatcher path are production code.
 
 Terminal A (webhook sink, must be up first):
 ```bash
-cd avp-sdk/examples/proof_pack
+cd agentveil-sdk/examples/proof_pack
 python webhook_receiver.py            # listens on http://127.0.0.1:8765/hook
 ```
 
 Terminal B (orchestrator):
 ```bash
-cd avp-sdk/examples/proof_pack
+cd agentveil-sdk/examples/proof_pack
 python run_demo.py \
     --server http://localhost:8000 \
     --compose-service api \

@@ -27,7 +27,7 @@ Replace:
 {
   "command": "python3",
   "args": ["-m", "mcp_server.server"],
-  "cwd": "/path/to/avp-sdk"
+  "cwd": "/path/to/agentveil-sdk"
 }
 ```
 

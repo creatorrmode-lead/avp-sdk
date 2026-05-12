@@ -72,7 +72,7 @@ explicit action-control tools for Runtime Gate, approvals, and signed receipts.
 Hosted `AVP_MCP_READONLY=1` exposes only the 8 read-only tools. The MCP server
 is an explicit toolbox, not an automatic proxy for other MCP tool calls.
 
-Glama directory: https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk
+Glama directory: https://glama.ai/mcp/servers/agentveil-protocol/agentveil-sdk
 
 ## DID support
 

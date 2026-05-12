@@ -275,7 +275,7 @@ exactly like the canonical path. They exist so existing MCP client configs
 keep working without edits. **Do not use these forms in new configs.**
 
 To migrate an existing config, replace `"command": "python3"` +
-`"args": ["-m", "mcp_server.server"]` + `"cwd": "/path/to/avp-sdk"` with a
+`"args": ["-m", "mcp_server.server"]` + `"cwd": "/path/to/agentveil-sdk"` with a
 single `"command": "agentveil-mcp"`. The `cwd` entry is no longer needed.
 
 ## Roadmap

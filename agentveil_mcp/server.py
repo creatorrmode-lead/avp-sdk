@@ -798,7 +798,7 @@ def protocol_info() -> str:
         "live_network": f"{BASE_URL}/live",
         "sdk": "pip install agentveil",
         "mcp": "pip install 'agentveil[mcp]'",
-        "github": "https://github.com/agentveil-protocol/avp-sdk",
+        "github": "https://github.com/agentveil-protocol/agentveil-sdk",
         "boundary": "Explicit MCP toolbox; does not automatically proxy or intercept other MCP tool calls.",
         "features": [
             "W3C DID Identity (Ed25519)",

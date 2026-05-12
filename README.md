@@ -6,9 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/agentveil)](https://pypi.org/project/agentveil/)
 [![Python](https://img.shields.io/pypi/pyversions/agentveil)](https://pypi.org/project/agentveil/)
-[![Tests](https://github.com/agentveil-protocol/avp-sdk/actions/workflows/tests.yml/badge.svg)](https://github.com/agentveil-protocol/avp-sdk/actions)
+[![Tests](https://github.com/agentveil-protocol/agentveil-sdk/actions/workflows/tests.yml/badge.svg)](https://github.com/agentveil-protocol/agentveil-sdk/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Glama MCP Directory](https://img.shields.io/badge/Glama-MCP%20Directory-blue)](https://glama.ai/mcp/servers/agentveil-protocol/avp-sdk)
+[![Glama MCP Directory](https://img.shields.io/badge/Glama-MCP%20Directory-blue)](https://glama.ai/mcp/servers/agentveil-protocol/agentveil-sdk)
 
 **Action control for autonomous agents — check posture, gate risky actions, prove execution.**
 
@@ -27,6 +27,8 @@ pip install agentveil
 > **[AVPProvider merged into Microsoft Agent Governance Toolkit (PR #1010).](https://github.com/microsoft/agent-governance-toolkit/pull/1010)** AgentVeil can be connected to Microsoft AGT / AgentMesh as an external trust and reputation integration.
 
 > **Paper:** Boiko, O. (2026). *[Why AI Agent Reputation Needs Both Link Analysis and Flow-Based Gating](https://zenodo.org/records/19730525)*. Zenodo.
+
+> **MCP transport proxy ships in v0.7.15:** wrap downstream MCP servers (filesystem, github, shell) with AgentVeil Action Control Plane gating, approval routing, durable signed evidence, and replay defense. IDE-friendly adapter for Claude Desktop, Cursor, Cline, Windsurf, and VS Code. See [`agentveil_mcp_proxy/README.md`](agentveil_mcp_proxy/README.md).
 
 <p align="center">
   <img src="docs/demo.gif" alt="AgentVeil SDK demo — preflight, runtime gate, approval, controlled execution, offline proof" width="720">
@@ -163,6 +165,11 @@ workflows, and developer infrastructure. AgentVeil provides three things:
 2. **Runtime gating** — evaluate risky actions before execution, route through signed approval when needed
 3. **Verifiable evidence** — produce signed receipts your audit / customer / partner can verify offline, no SDK or AVP API required
 
+AgentVeil does not claim to solve the general access-control safety problem.
+Instead, it makes agent actions constrained, auditable, and reversible within a
+declared action vocabulary and policy subset: each gated decision is bound to
+explicit risk, resource, environment, and payload evidence.
+
 See [Security Context](docs/SECURITY_CONTEXT.md) for verified CVEs, market data,
 and the structural problem AgentVeil addresses.
 
@@ -176,6 +183,18 @@ and the structural problem AgentVeil addresses.
 | **Risky action execution** | Agent calls `deploy` / `transfer` / `delete` directly | Evaluated before execution → allow / approval_required / block |
 | **Approval on critical steps** | Rubber-stamped or skipped | Signed approval receipt — single-use, expiring, bound to exact action/resource/env |
 | **Audit evidence** | "Agent triggered X" in app logs | Signed receipt with action hash, decision hash, approval hash, timestamp — verifiable offline by audit / customer / partner |
+
+---
+
+## Capability Tokens
+
+AVP approvals are capability tokens, not flat permissions. A Runtime Gate
+decision or approval grant is signed by the AVP backend, scoped to concrete
+action context (`client_risk_class`, `client_policy_context_hash`, and
+`payload_hash`), time-bounded by grant expiry, replay-resistant at the proxy
+boundary, and attenuatable through narrower follow-on grants such as
+`similar_5m`. Downstream tools receive only the authority needed for the
+approved action, not broad standing permission.
 
 ---
 
@@ -235,6 +254,7 @@ def review_code(pr_url: str) -> str:
 | **AutoGen** | `pip install agentveil autogen-core` | `avp_reputation_tools()` |
 | **OpenAI** | `pip install agentveil openai` | `avp_tool_definitions()` + `handle_avp_tool_call(...)` from `agentveil.tools.openai` |
 | **MCP clients** | `pip install 'agentveil[mcp]'` | `agentveil-mcp` for Runtime Gate, approvals, receipts, reputation, identity lookup, and audit ([docs](agentveil_mcp/README.md)) |
+| **MCP transport proxy** | `pip install agentveil` | `agentveil-mcp-proxy` wraps downstream MCP servers (filesystem, github, shell) with Action Control Plane gating, approval routing, durable signed evidence, and replay defense for Claude Desktop, Cursor, Cline, Windsurf, and VS Code ([docs](agentveil_mcp_proxy/README.md)) |
 | **Gemini** | `pip install agentveil google-generativeai` | Function-calling example: [`examples/gemini_example.py`](examples/gemini_example.py) |
 | **PydanticAI** | `pip install agentveil pydantic-ai` | Tool example: [`examples/pydantic_ai_example.py`](examples/pydantic_ai_example.py) |
 | **Paperclip** | `pip install agentveil` | `avp_should_delegate(...)`, `avp_evaluate_team(...)`, `avp_plugin_tools()` |
@@ -301,6 +321,7 @@ Negative attestations require both `context` and a 64-character lowercase hex
 | [Protocol Spec](docs/PROTOCOL.md) | AgentVeil wire format and authentication |
 | [Security Model](docs/SECURITY_MODEL.md) | Mode 1 SDK developer flow, Mode 2/3 gateway enforcement roadmap |
 | [MCP Proxy Operations](docs/MCP_PROXY_OPERATIONS.md) | Downstream lifecycle behavior and response timeout configuration |
+| [MCP Proxy Design Principles](docs/MCP_PROXY_DESIGN_PRINCIPLES.md) | Saltzer-Schroeder mapping, HRU-aware framing, and capability-token discipline |
 | [Security Context](docs/SECURITY_CONTEXT.md) | Why agent trust matters — CVEs and market data |
 | [Agent Network (Advanced)](docs/ADVANCED_AGENT_NETWORK.md) | Reputation, attestations, agent identity — internal mechanisms |
 | [Changelog](CHANGELOG.md) | Version history |
@@ -329,8 +350,8 @@ Framework examples: [CrewAI](examples/crewai_example.py) · [LangGraph](examples
 
 ## Community
 
-- ⭐ **[Star this repo](https://github.com/agentveil-protocol/avp-sdk/stargazers)** — helps others discover AgentVeil
-- 🐛 **[Open an issue](https://github.com/agentveil-protocol/avp-sdk/issues)** — bugs, questions, feature requests
+- ⭐ **[Star this repo](https://github.com/agentveil-protocol/agentveil-sdk/stargazers)** — helps others discover AgentVeil
+- 🐛 **[Open an issue](https://github.com/agentveil-protocol/agentveil-sdk/issues)** — bugs, questions, feature requests
 - 📖 **[Customer Integration guide](docs/CUSTOMER_INTEGRATION.md)** — production setup
 
 ---

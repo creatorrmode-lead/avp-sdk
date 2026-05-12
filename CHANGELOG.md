@@ -9,6 +9,65 @@ All notable changes to the `agentveil` SDK.
   named while AgentVeil is described as an external trust and reputation
   integration.
 
+## [0.7.15] - 2026-05-12
+
+Post-launch polish release: discoverability fixes for the v0.1 MCP Proxy
+adapter and Tier 1 differentiator framing per the AgentVeil design principles
+roadmap. Zero production code changes; documentation, metadata, and design
+narrative only.
+
+### Changed
+- Bumped PyPI `Development Status` classifier from `4 - Beta` to
+  `5 - Production/Stable` to match the project's commercial-bar discipline.
+- Surfaced the `agentveil-mcp-proxy` MCP transport proxy adapter in the
+  top-level `README.md` integrations table alongside framework adapters,
+  Bedrock, and Microsoft AgentMesh.
+- Surfaced the MCP transport proxy in `README_PYPI.md` features list and
+  added a dedicated section with quick-start commands and a link to the
+  subproject README.
+- Added `mcp-proxy` keyword to `pyproject.toml` for PyPI search discovery.
+- Reframed customer-facing authorization narrative as capability tokens
+  (signed, scoped, time-bounded, replay-resistant, attenuatable) per Mark
+  Miller (2006) and Macaroons (NDSS 2014) discipline. AVP's existing
+  `similar_5m` scope expansion already implements these properties; this
+  release names them explicitly.
+- Adjusted customer copy to acknowledge HRU 1976 undecidability of the general
+  access-control safety problem. AVP claims constrained, auditable, reversible
+  decisions within the practically decidable policy subset, not unconditional
+  safety.
+- Updated public repository URL references in `README.md`, `README_PYPI.md`,
+  `pyproject.toml`, `AGENTS.md`, and `agentveil_mcp/server.py`, and refreshed
+  customer-facing example paths in `agentveil_mcp/README.md`,
+  `examples/proof_pack/README.md`, and `mcp_server/README.md` from `avp-sdk`
+  to `agentveil-sdk` after the GitHub repository rename for brand consistency
+  with the `agentveil` PyPI package name. Operator-local
+  `/Users/.../avp-sdk-public` release-smoke paths remain unchanged.
+- Added an MCP transport proxy "what's new" callout to the top-level
+  `README.md` hero section surfacing the v0.7.15 ship and IDE client coverage
+  without disrupting the AVP product-led hero tagline.
+
+### Added
+- New design principles document at
+  [`docs/MCP_PROXY_DESIGN_PRINCIPLES.md`](docs/MCP_PROXY_DESIGN_PRINCIPLES.md)
+  mapping AgentVeil MCP Proxy architecture to the eight Saltzer-Schroeder
+  (1975) principles: economy of mechanism, fail-safe defaults, complete
+  mediation, open design, separation of privilege, least privilege, least
+  common mechanism, and psychological acceptability.
+
+### Audit References
+- Discoverability fixes: PL-1, PL-2, PL-3, PL-4, caught reviewer-side after
+  the P11.5 ceremony.
+- Differentiator items: #1 Saltzer-Schroeder citation, #2 HRU honest framing,
+  #3 capability discipline reframing - Tier 1 free items from
+  `avp_mcp_proxy_differentiators_roadmap.md`.
+
+### Validation
+- No production code changes. Pytest baseline unchanged: 642 passed, 1 skipped.
+- Bandit static analysis unchanged: 6 LOW, 0 MEDIUM, 0 HIGH.
+- All refined customer-facing wording scans (AI-attribution, prohibited
+  product terminology, production-grade strict reading) return zero matches
+  post-edit.
+
 ## [0.7.14] - 2026-05-11
 
 AgentVeil MCP Proxy v0.1 first public release. Action Control Plane for IDE
