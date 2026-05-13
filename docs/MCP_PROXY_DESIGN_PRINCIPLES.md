@@ -86,9 +86,9 @@ directly. Each client JSON-RPC request passes through the same mediation path:
 7. Forward only allowed or approved calls to the downstream MCP server.
 
 This mediation boundary is precise: calls that bypass the proxy cannot be
-mediated by the proxy. That is why the AgentVeil posture scanner remains a
-separate pre-deployment tool: it finds bypass paths, exposed credentials, and
-uncontrolled integrations before runtime.
+mediated by the proxy. That is why Lurkr remains a separate pre-runtime scanner:
+it finds bypass paths, exposed credentials, and uncontrolled integrations before
+deployment.
 
 ## 4. Open Design
 

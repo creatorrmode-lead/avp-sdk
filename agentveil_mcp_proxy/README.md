@@ -55,7 +55,10 @@ agentveil-mcp-proxy run
 The proxy reads stdio from your MCP client, classifies tool calls, evaluates
 them through AVP Runtime Gate, routes approval prompts to a local browser UI
 when needed, persists durable signed evidence, and forwards approved calls to
-the downstream server.
+the downstream server. Raw MCP arguments, prompts, outputs, tokens, source code,
+secrets, and private logs remain local by default; Runtime Gate receives only
+privacy-filtered metadata and hashes needed for the decision. See
+[Data Handling](../docs/DATA_HANDLING.md).
 
 ### Supported invocation paths
 

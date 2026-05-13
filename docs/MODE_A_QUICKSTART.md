@@ -9,19 +9,20 @@ AgentVeil is one Action Control system. Reputation, identity, delegation,
 approvals, and receipts are decision inputs and evidence mechanisms, not
 separate products.
 
-## Step 1 — Scan Your Project For Risky Capabilities (planned after Phase 1 acceptance)
+## Step 1 — Check Agent Capabilities Before Deployment
 
-Posture v0.1 launches as a standalone OSS package (planned after Phase 1
-acceptance). It is the first Project Owner entry point.
+Lurkr is the local pre-runtime scanner for risky AI-agent capabilities. It is
+the first Project Owner entry point.
 
 ```bash
-pip install agentveil-posture  # (planned after Phase 1 acceptance)
-agentveil-posture scan ./your-project
+pip install lurkr
+lurkr scan --path ./your-agent-project
 ```
 
-The scanner reports risky agent and automation surfaces such as deploy actions,
-shell execution, credential access, and missing approval boundaries. Treat the
-report as a triage input before wiring runtime controls.
+Lurkr reports risky agent and automation surfaces such as deploy actions, shell
+execution, credential access, undeclared tool registrations, dynamic prompt
+construction, and missing approval boundaries. Treat the report as a triage input
+before wiring runtime controls.
 
 ## Step 2 — Define Local Policy (planned for v0.8 / Phase 3)
 
@@ -102,10 +103,10 @@ Relevant guides:
 
 | Milestone | Status |
 |---|---|
-| Mode A v0.1: Posture scan as project entry point | Built; public launch planned after Phase 1 acceptance |
+| Mode A v0.1: Lurkr pre-runtime check as project entry point | Built; available as `lurkr` |
 | Mode A v0.8: local policy file and `evaluate_action(...)` | (planned for v0.8 / Phase 3) |
 | Mode A CLI: `agentveil policy init` and `agentveil check-action` | (planned for Phase 4) |
-| MCP proxy and signed local receipts | (planned for Phase 4) |
+| MCP Proxy and signed local receipts | Built; available through `agentveil-mcp-proxy` |
 | Managed or customer-hosted gateway enforcement | (planned for Phase 5) |
 
 Public claims should track this table. If a capability is listed as planned, do

@@ -2,7 +2,7 @@
 
 ## Overview
 
-AVP helps teams control risky AI agent actions: check posture before runtime,
+AVP helps teams control risky AI agent actions: check pre-runtime risk,
 gate execution, and prove what happened with signed receipts. The public
 protocol combines cryptographic identity, peer reputation, and signed evidence.
 

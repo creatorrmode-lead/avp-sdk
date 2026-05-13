@@ -41,7 +41,7 @@ P0 must settle the decisions needed before P1 implementation:
 - MCP protocol scope;
 - local policy and `ask_backend` semantics;
 - GitHub scenario target;
-- Posture boundary;
+- Lurkr boundary;
 - license/dual-use decision placeholder.
 
 ## Current Assets
@@ -57,7 +57,7 @@ The current AVP stack already provides:
 - typed SDK errors;
 - production smoke evidence;
 - `agentveil-mcp` local/full action-control toolbox;
-- `agentveil-posture` as a separate local scanner/top-of-funnel product.
+- `lurkr` as a separate local scanner/top-of-funnel product.
 
 These remain intact. MCP Proxy v0.1 builds beside them rather than changing the
 backend/core system first.
@@ -639,26 +639,26 @@ Scenario behavior:
 - dangerous/admin/delete operation: approval or block;
 - local evidence plus verified AVP decision/approval receipt preserved.
 
-## Posture Boundary
+## Lurkr Boundary
 
-Posture remains a separate top-of-funnel product:
+Lurkr remains a separate top-of-funnel product:
 
-- package: `agentveil-posture`;
-- repo: `agentveil-posture`;
+- package: `lurkr`;
+- repo: `agentveil-protocol/lurkr`;
 - local-only scanner;
 - no runtime enforcement;
 - best-effort bypass detection.
 
-Posture is outside the MCP adapter v0.1 polishing scope. It can later generate
-recommended proxy configs and policies, but the proxy must not require Posture
-for core runtime operation and this v0.1 sequence does not include a Posture
+Lurkr is outside the MCP adapter v0.1 polishing scope. It can later generate
+recommended proxy configs and policies, but the proxy must not require Lurkr
+for core runtime operation and this v0.1 sequence does not include a Lurkr
 integration step.
 
-A future Posture-to-proxy bridge would be a separate opt-in slice added only if
-customer demand surfaces. Posture remains an orthogonal pre-deployment scanner,
+A future Lurkr-to-proxy bridge would be a separate opt-in slice added only if
+customer demand surfaces. Lurkr remains an orthogonal pre-deployment scanner,
 not a runtime dependency for the MCP Proxy.
 
-Posture bypass detection is advisory. It can flag direct MCP config entries that
+Lurkr bypass detection is advisory. It can flag direct MCP config entries that
 avoid the proxy, but authoritative enforcement requires routing through the
 proxy.
 

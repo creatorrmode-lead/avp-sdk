@@ -164,6 +164,11 @@ Returns `ControlledActionOutcome`:
 
 Human approval is never auto-approved by `controlled_action(...)`.
 
+`params` are sent to the hosted execution workflow when that path is used. For
+sensitive actions, prefer stable resource identifiers and hashes. Do not place
+secrets, raw prompts, source code, private logs, credentials, or sensitive
+customer payloads in `params` unless that hosted workflow explicitly requires it.
+
 ### `execute_after_approval(...)`
 
 ```python

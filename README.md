@@ -10,7 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Glama MCP Directory](https://img.shields.io/badge/Glama-MCP%20Directory-blue)](https://glama.ai/mcp/servers/agentveil-protocol/agentveil-sdk)
 
-**Action control for autonomous agents — check posture, gate risky actions, prove execution.**
+**Action control for autonomous agents — check pre-runtime risk, gate risky actions, prove execution.**
 
 [Quick Start](#quick-start) · [Comparison](#comparison) · [Examples](examples/) · [Docs](docs/)
 
@@ -39,6 +39,8 @@ pip install agentveil
 > **Audit chain walkthrough:** [`examples/proof_pack/`](examples/proof_pack/) — local-backend demo proving offline audit-trail integrity verification. End-to-end flow: signed events → tamper-resistant chain → offline verify (stdlib only, no SDK dependency).
 >
 > **Controlled-action proof packets:** Runtime Gate flows can export signed proof packets with `agent.build_proof_packet(...)`; see [Customer Integration](docs/CUSTOMER_INTEGRATION.md).
+>
+> **Data handling:** AgentVeil does not train models on customer data or sell customer data. Runtime Gate is designed for bounded metadata and hashes; MCP Proxy keeps raw MCP arguments local by default. See [Data Handling](docs/DATA_HANDLING.md).
 
 ```python
 from datetime import timedelta
@@ -129,11 +131,11 @@ assert AVPAgent.verify_w3c_credential(cred)  # offline, no API call
 Project owners can use AgentVeil as an action-control path for agents, tools,
 workflows, MCP servers, and CI jobs inside one project.
 
-1. Scan the project with Posture v0.1:
+1. Check the agent project with Lurkr before deployment:
 
    ```bash
-   pip install agentveil-posture        # (planned after Phase 1 acceptance)
-   agentveil-posture scan ./your-project
+   pip install lurkr
+   lurkr scan --path ./your-agent-project
    ```
 
 2. Define local policy:
@@ -229,7 +231,7 @@ def review_code(pr_url: str) -> str:
 
 **Action control surface**
 
-- **Posture Checks** — inspect agent identity, status (active/suspended), and reputation signals before runtime
+- **Pre-runtime Checks** — inspect agent identity, status, delegation evidence, and risk signals before runtime
 - **Runtime Gate** — evaluate risky actions before execution and return allow / approval required / block
 - **Signed Receipts** — keep tamper-evident proof for gate decisions, approvals, and execution
 - **W3C VC v2.0 Credentials** — export offline-verifiable credentials with `eddsa-jcs-2022` Data Integrity proofs
@@ -308,6 +310,7 @@ Negative attestations require both `context` and a 64-character lowercase hex
 | Doc | Description |
 |-----|-------------|
 | [API Reference](docs/API.md) | Full SDK method reference with examples |
+| [Data Handling](docs/DATA_HANDLING.md) | Local tools, hosted proof ledger, customer evidence stores, hosted content surfaces, and privacy guardrails |
 | [Customer Integration](docs/CUSTOMER_INTEGRATION.md) | Controlled-action flow, secrets, errors, and compliance evidence |
 | [Mode A Quickstart](docs/MODE_A_QUICKSTART.md) | Project owner path — scan, policy, evaluate, evidence |
 | [Error Handling](docs/ERRORS.md) | Exception hierarchy, recovery patterns, HTTP status mapping |

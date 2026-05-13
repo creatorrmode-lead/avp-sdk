@@ -17,13 +17,25 @@ Identity -> Cards/Reputation/Attestations -> Delegation
 
 Use `can_trust()` before selecting an agent. Use `controlled_action()` before the agent performs a concrete action.
 
+## Data Handling
+
+AgentVeil separates local tools, hosted control/evidence APIs, and hosted
+content surfaces. Runtime Gate decisions should be based on bounded metadata,
+resource identifiers, hashes, and signed evidence. Do not place secrets, raw
+prompts, source code, private logs, credentials, or sensitive customer payloads
+in action names, resource names, metadata, denial reasons, support messages, job
+descriptions, or direct execution parameters unless the hosted workflow
+explicitly requires that content.
+
+For the full model, see [Data Handling](DATA_HANDLING.md).
+
 ## Secrets
 
 Client-side:
 
 - Store the agent Ed25519 private key locally.
 - `AVPAgent.save(passphrase=...)` encrypts the key.
-- Never send private keys, API keys, cloud tokens, or raw private logs to AVP.
+- Never send private keys, API keys, cloud tokens, raw prompts, source code, or raw private logs to AVP.
 
 Operator/backend:
 
@@ -124,6 +136,10 @@ elif result.status == "blocked":
 ```
 
 `controlled_action()` never auto-approves. If approval is required, the principal must approve the request with their own DID.
+
+Direct SDK `params` are a hosted execution surface. Keep them small and prefer
+resource identifiers or hashes. For MCP clients, MCP Proxy is the preferred path
+when raw tool arguments should remain local.
 
 To export an explicit proof packet from local artifacts, call
 `build_proof_packet(...)` after `controlled_action(...)`:
